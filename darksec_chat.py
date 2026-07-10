@@ -798,26 +798,26 @@ class ChatDisplay:
     def chat_view(self, msgs, scroll, pc, wo):
         self._dim_check()
         self._leds(pc, wo)
-        t = self.theme
-        self.p.clear(t['BG'])
+        theme = self.theme
+        self.p.clear(theme['BG'])
         W, H = self.W, self.H
 
         # Header
-        self.p.fill_rect(0, 0, W, self.HEADER_H, t['PANEL'])
-        self.p.fill_rect(0, self.HEADER_H-2, W, 2, t['ACCENT'])
-        self._text(6, 4, "DarkSec", t['TITLE'], ts=14)
+        self.p.fill_rect(0, 0, W, self.HEADER_H, theme['PANEL'])
+        self.p.fill_rect(0, self.HEADER_H-2, W, 2, theme['ACCENT'])
+        self._text(6, 4, "DarkSec", theme['TITLE'], ts=14)
 
-        mcol = t['OK'] if pc > 0 else t['OFF']
-        wcol = t['OK'] if wo else t['OFF']
+        mcol = theme['OK'] if pc > 0 else theme['OFF']
+        wcol = theme['OK'] if wo else theme['OFF']
         mesh = f"MESH {pc}"
         web = "WEB OK" if wo else "WEB --"
         if self._ttf:
             for x, label, col in [(W-150, mesh, mcol), (W-76, web, wcol)]:
-                self.p.fill_rect(x-4, 4, 68, 15, t['PANEL_2'])
+                self.p.fill_rect(x-4, 4, 68, 15, theme['PANEL_2'])
                 self.p.rect(x-4, 4, 68, 15, col)
                 self.p.draw_ttf(x, 6, label, col, self._font, 9)
         else:
-            self.p.draw_text(W-112, 8, f"M:{pc} W:{'ON' if wo else '--'}", t['MUTED'], 1)
+            self.p.draw_text(W-112, 8, f"M:{pc} W:{'ON' if wo else '--'}", theme['MUTED'], 1)
 
         # Lines
         lh = self.p.ttf_height(self._font, 13)+2 if self._ttf else 9
@@ -828,7 +828,7 @@ class ChatDisplay:
         lines = []
         for m in reversed(msgs[-200:]):
             s = m.get('sender','?')
-            t = m.get('text','')
+            text = m.get('text','')
             tm = m.get('time','')
             src = m.get('source','mesh')
             pfx = f"[{tm}]"
@@ -837,10 +837,10 @@ class ChatDisplay:
             else:               np = s
             lines.append((f"{pfx} {np}:", src))
             if self._ttf:
-                for w in wrap_pixel(t, W-12, self.p, self._font, 13):
+                for w in wrap_pixel(text, W-12, self.p, self._font, 13):
                     lines.append((w, src))
             else:
-                for w in self._wrap_approx(t, mw):
+                for w in self._wrap_approx(text, mw):
                     lines.append((w, src))
             lines.append(('',''))
 
@@ -851,9 +851,9 @@ class ChatDisplay:
             empty = "No messages yet. Press A to send."
             if self._ttf:
                 tw = self.p.ttf_width(empty, self._font, 13)
-                self.p.draw_ttf((W-tw)//2, self.HEADER_H+45, empty, t['MUTED'], self._font, 13)
+                self.p.draw_ttf((W-tw)//2, self.HEADER_H+45, empty, theme['MUTED'], self._font, 13)
             else:
-                self.p.draw_text_centered(self.HEADER_H+45, empty, t['MUTED'], 1)
+                self.p.draw_text_centered(self.HEADER_H+45, empty, theme['MUTED'], 1)
 
         ms = max(0, len(lines)-mv)
         scroll = max(0, min(scroll, ms))
@@ -864,22 +864,22 @@ class ChatDisplay:
             if not lt:
                 y += max(1, lh//2)
                 continue
-            if src == 'self':      cl = t['SELF']
-            elif src == 'web':     cl = t['WEB']
-            elif src == 'system':  cl = t['SYSTEM']
-            elif lt.endswith(':'): cl = t['PEER']
-            else:                  cl = t['TEXT']
+            if src == 'self':      cl = theme['SELF']
+            elif src == 'web':     cl = theme['WEB']
+            elif src == 'system':  cl = theme['SYSTEM']
+            elif lt.endswith(':'): cl = theme['PEER']
+            else:                  cl = theme['TEXT']
             self._text(4, y, lt, cl, ts=13)
             y += lh
 
         if ms > 0:
             bh = max(8, ah*mv//max(1,len(lines)))
             by = self.HEADER_H + (ah-bh)*scroll//max(1,ms)
-            self.p.fill_rect(W-4, by, 3, bh, t['ACCENT'])
+            self.p.fill_rect(W-4, by, 3, bh, theme['ACCENT'])
 
-        self.p.fill_rect(0, H-self.FOOTER_H, W, self.FOOTER_H, t['PANEL'])
-        self.p.hline(0, H-self.FOOTER_H, W, t['ACCENT'])
-        self._text(5, H-self.FOOTER_H+2, "UP/DN scroll   A send   B menu   PWR exit", t['MUTED'], ts=10)
+        self.p.fill_rect(0, H-self.FOOTER_H, W, self.FOOTER_H, theme['PANEL'])
+        self.p.hline(0, H-self.FOOTER_H, W, theme['ACCENT'])
+        self._text(5, H-self.FOOTER_H+2, "UP/DN scroll   A send   B menu   PWR exit", theme['MUTED'], ts=10)
         self.p.flip()
         return scroll
 
