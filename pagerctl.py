@@ -81,6 +81,15 @@ if _lib is None:
     raise OSError("Could not find libpagerctl.so")
 
 
+def _optional_lib_function(name, argtypes, restype):
+    if not hasattr(_lib, name):
+        return False
+    func = getattr(_lib, name)
+    func.argtypes = argtypes
+    func.restype = restype
+    return True
+
+
 class Pager:
     """High-level wrapper for pager hardware control."""
 
@@ -259,14 +268,10 @@ class Pager:
         _lib.pager_draw_image_file.restype = c_int
         _lib.pager_draw_image_file_scaled.argtypes = [c_int, c_int, c_int, c_int, c_char_p]
         _lib.pager_draw_image_file_scaled.restype = c_int
-        _lib.pager_get_image_info.argtypes = [c_char_p, POINTER(c_int), POINTER(c_int)]
-        _lib.pager_get_image_info.restype = c_int
-        _lib.pager_draw_image_scaled_rotated.argtypes = [c_int, c_int, c_int, c_int, c_void_p, c_int]
-        _lib.pager_draw_image_scaled_rotated.restype = None
-        _lib.pager_draw_image_file_scaled_rotated.argtypes = [c_int, c_int, c_int, c_int, c_char_p, c_int]
-        _lib.pager_draw_image_file_scaled_rotated.restype = c_int
-        _lib.pager_screenshot.argtypes = [c_char_p, c_int]
-        _lib.pager_screenshot.restype = c_int
+        _optional_lib_function('pager_get_image_info', [c_char_p, POINTER(c_int), POINTER(c_int)], c_int)
+        _optional_lib_function('pager_draw_image_scaled_rotated', [c_int, c_int, c_int, c_int, c_void_p, c_int], None)
+        _optional_lib_function('pager_draw_image_file_scaled_rotated', [c_int, c_int, c_int, c_int, c_char_p, c_int], c_int)
+        _optional_lib_function('pager_screenshot', [c_char_p, c_int], c_int)
 
     def init(self):
         result = _lib.pager_init()
@@ -473,6 +478,8 @@ class Pager:
         return _lib.pager_draw_image_file_scaled(x, y, w, h, filepath.encode())
 
     def get_image_info(self, filepath):
+        if not hasattr(_lib, 'pager_get_image_info'):
+            return None
         w = c_int()
         h = c_int()
         if _lib.pager_get_image_info(filepath.encode(), byref(w), byref(h)) == 0:
@@ -480,13 +487,17 @@ class Pager:
         return None
 
     def draw_image_scaled_rotated(self, x, y, w, h, handle, rotation=0):
-        if handle:
+        if handle and hasattr(_lib, 'pager_draw_image_scaled_rotated'):
             _lib.pager_draw_image_scaled_rotated(x, y, w, h, handle, rotation)
 
     def draw_image_file_scaled_rotated(self, x, y, w, h, filepath, rotation=0):
+        if not hasattr(_lib, 'pager_draw_image_file_scaled_rotated'):
+            return -1
         return _lib.pager_draw_image_file_scaled_rotated(x, y, w, h, filepath.encode(), rotation)
 
     def screenshot(self, filepath, rotation=270):
+        if not hasattr(_lib, 'pager_screenshot'):
+            return -1
         return _lib.pager_screenshot(filepath.encode(), rotation)
 
     def __enter__(self):
