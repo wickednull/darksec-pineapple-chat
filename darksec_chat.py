@@ -10,15 +10,13 @@ Controls:
   PWR          Exit
 
 Dependencies: python3, python3-ctypes, pagerctl
-Optional: python3-requests (used if installed; urllib fallback is built in)
+HTTP transport: urllib.request with an automatic curl fallback
 """
 
-import os, sys, json, time, socket, threading
+import os, sys, json, time, socket, threading, shutil, subprocess
 from datetime import datetime
 from collections import deque
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib import request as urllib_request
-from urllib.error import HTTPError, URLError
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -58,11 +56,6 @@ try:
 except (ImportError, OSError) as e:
     print(f"ERROR: Failed to import pagerctl: {e}")
     sys.exit(1)
-
-try:
-    import requests
-except ImportError:
-    requests = None
 
 # ---------------------------------------------------------------------------
 # Font discovery
@@ -311,39 +304,96 @@ def next_theme_name(current, direction=1):
     return THEME_ORDER[(idx + direction) % len(THEME_ORDER)]
 
 
-class HttpJsonResponse:
-    def __init__(self, status_code, payload):
-        self.status_code = status_code
-        self._payload = payload
+class DarkSecHTTP:
+    """Small JSON HTTP client for OpenWrt: urllib first, curl second."""
 
-    def json(self):
-        return self._payload
+    def __init__(self, timeout=20):
+        self.timeout = timeout
 
+    def request(self, method, url, data=None, headers=None):
+        headers = dict(headers or {})
+        headers.setdefault('Accept', 'application/json')
+        headers.setdefault('User-Agent', 'DarkSec-Chat-Pager/2.0')
+        body = None
+        if data is not None:
+            body = json.dumps(data).encode('utf-8')
+            headers.setdefault('Content-Type', 'application/json')
+        try:
+            return self._urllib_request(method.upper(), url, body, headers)
+        except (ImportError, ModuleNotFoundError):
+            return self._curl_request(method.upper(), url, body, headers)
+        except Exception as error:
+            if shutil.which('curl'):
+                return self._curl_request(method.upper(), url, body, headers)
+            return {'ok': False, 'status': 0, 'data': None, 'error': str(error)}
 
-def http_get_json(url, timeout=5):
-    if requests is not None:
-        return requests.get(url, timeout=timeout)
-    req = urllib_request.Request(url, headers={'Accept': 'application/json'})
-    with urllib_request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode('utf-8')
-        status = getattr(resp, 'status', resp.getcode())
-        return HttpJsonResponse(status, json.loads(body or '[]'))
+    def get(self, url, headers=None):
+        return self.request('GET', url, headers=headers)
 
+    def post(self, url, data, headers=None):
+        return self.request('POST', url, data=data, headers=headers)
 
-def http_post_json(url, payload, timeout=5):
-    if requests is not None:
-        return requests.post(url, json=payload, timeout=timeout)
-    data = json.dumps(payload).encode('utf-8')
-    req = urllib_request.Request(
-        url,
-        data=data,
-        headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-        method='POST',
-    )
-    with urllib_request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode('utf-8')
-        status = getattr(resp, 'status', resp.getcode())
-        return HttpJsonResponse(status, json.loads(body or '{}'))
+    def _urllib_request(self, method, url, body, headers):
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                raw = response.read().decode('utf-8', errors='replace')
+                return self._result(response.getcode(), raw)
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode('utf-8', errors='replace')
+            result = self._result(error.code, raw)
+            result['error'] = 'HTTP %s: %s' % (error.code, error.reason)
+            return result
+        except urllib.error.URLError as error:
+            return {'ok': False, 'status': 0, 'data': None,
+                    'error': 'Connection error: %s' % error.reason}
+
+    def _curl_request(self, method, url, body, headers):
+        curl = shutil.which('curl')
+        if not curl:
+            return {'ok': False, 'status': 0, 'data': None,
+                    'error': 'Neither urllib.request nor curl is available'}
+        marker = '\n__DARKSEC_STATUS__:'
+        command = [curl, '--silent', '--show-error', '--location', '--max-time',
+                   str(self.timeout), '--request', method]
+        for key, value in headers.items():
+            command.extend(['--header', '%s: %s' % (key, value)])
+        if body is not None:
+            command.extend(['--data-binary', body.decode('utf-8')])
+        command.extend(['--write-out', marker + '%{http_code}', url])
+        try:
+            completed = subprocess.run(command, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True,
+                                       timeout=self.timeout + 5, check=False)
+        except subprocess.TimeoutExpired:
+            return {'ok': False, 'status': 0, 'data': None, 'error': 'Request timed out'}
+        if completed.returncode != 0:
+            return {'ok': False, 'status': 0, 'data': None,
+                    'error': completed.stderr.strip() or 'curl request failed'}
+        raw_body, separator, raw_status = completed.stdout.rpartition(marker)
+        try:
+            status = int(raw_status.strip()) if separator else 0
+        except ValueError:
+            status = 0
+        return self._result(status, raw_body if separator else completed.stdout)
+
+    @staticmethod
+    def _decode(raw):
+        raw = raw.strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+
+    @classmethod
+    def _result(cls, status, raw):
+        ok = 200 <= status < 300
+        return {'ok': ok, 'status': status, 'data': cls._decode(raw),
+                'error': None if ok else 'HTTP %s' % status}
 
 
 # ===================================================================
@@ -409,6 +459,7 @@ class ChatBackend:
         self._web_enabled = bool(url)
         self._web_seen = set()
         self._web_last_id = 0
+        self._http = DarkSecHTTP(timeout=5)
 
     def start(self):
         self.running = True
@@ -589,12 +640,14 @@ class ChatBackend:
 
     def _poll_web_once(self):
         try:
-            r = http_get_json(self._web_poll_url(), timeout=5)
-            if r.status_code != 200:
+            response = self._http.get(self._web_poll_url())
+            if not response['ok']:
                 self._web_ok = False
+                app_log("web_poll failed status=%s error=%s" %
+                        (response['status'], response['error']))
                 return
             self._web_ok = True
-            data = r.json()
+            data = response['data']
             msgs = data if isinstance(data, list) else data.get('messages', [])
             for msg in msgs:
                 mid = msg.get('id')
@@ -612,23 +665,24 @@ class ChatBackend:
                 if t:
                     self.add_message(msg.get('username','Web'), t, 'web', msg.get('created_at'))
                     self._mesh_send(f"[Web] {msg.get('username','WebUser')}: {t}")
-        except (OSError, json.JSONDecodeError, ValueError, HTTPError, URLError) as e:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             app_log(f"web_poll error={e}")
             self._web_ok = False
         except Exception as e:
-            if requests is not None and isinstance(e, requests.RequestException):
-                app_log(f"web_poll requests_error={e}")
-                self._web_ok = False
-            else:
-                app_log(f"web_poll unexpected_error={e}")
-                self._web_ok = False
+            app_log(f"web_poll unexpected_error={e}")
+            self._web_ok = False
 
     def _web_post(self, text):
         try:
             app_log(f"web_post start len={len(text)} url={self._web_url}")
-            http_post_json(self._web_url, {"username":self.username,"message":text}, timeout=5)
-            app_log("web_post ok")
-        except (OSError, HTTPError, URLError) as e:
+            response = self._http.post(
+                self._web_url, {"username": self.username, "message": text})
+            if response['ok']:
+                app_log("web_post ok")
+            else:
+                app_log("web_post failed status=%s error=%s" %
+                        (response['status'], response['error']))
+        except (OSError, ValueError, TypeError) as e:
             app_log(f"web_post error={e}")
             pass
         except Exception as e:
