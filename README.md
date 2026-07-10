@@ -27,11 +27,6 @@ darksec/
 
 ## Install
 
-Copy the `darksec` directory to the Pager:
-
-```sh
-scp -r darksec root@<pager-ip>:/root/payloads/user/general/darksec-chat
-```
 
 The payload expects to run from:
 
