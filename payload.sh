@@ -23,6 +23,27 @@ PAYLOAD_DIR="$(cd "$PAYLOAD_DIR" 2>/dev/null && pwd)"
 if [ -z "$PAYLOAD_DIR" ]; then
     PAYLOAD_DIR="$(pwd)"
 fi
+
+if [ ! -f "$PAYLOAD_DIR/darksec_chat.py" ]; then
+    for candidate in \
+        /root/payloads/user/general/darksec-chat \
+        /root/payloads/user/general/darksec-pineapple-chat \
+        /mmc/root/payloads/user/general/darksec-chat \
+        /mmc/root/payloads/user/general/darksec-pineapple-chat; do
+        if [ -f "$candidate/darksec_chat.py" ] && [ -f "$candidate/payload.sh" ]; then
+            PAYLOAD_DIR="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ ! -f "$PAYLOAD_DIR/darksec_chat.py" ]; then
+    FOUND_PAYLOAD="$(find /root/payloads /mmc/root/payloads -path '*/darksec_chat.py' 2>/dev/null | head -n 1)"
+    if [ -n "$FOUND_PAYLOAD" ]; then
+        PAYLOAD_DIR="$(dirname "$FOUND_PAYLOAD")"
+    fi
+fi
+
 DATA_DIR="$PAYLOAD_DIR/data"
 LOG_DIR="/root/loot/darksec-chat"
 LOG_FILE="$LOG_DIR/darksec_chat.log"
@@ -39,7 +60,7 @@ cd "$PAYLOAD_DIR" || {
 #
 PAGERCTL_PY=""
 PAGERCTL_SO=""
-PAGERCTL_SEARCH_DIRS="$PAYLOAD_DIR/lib $PAYLOAD_DIR /mmc/root/payloads/user/utilities/PAGERCTL /root/payloads/user/utilities/PAGERCTL /mmc/usr/lib /usr/lib"
+PAGERCTL_SEARCH_DIRS="$PAYLOAD_DIR/lib $PAYLOAD_DIR /tmp/lib /mmc/root/payloads/user/utilities/PAGERCTL /root/payloads/user/utilities/PAGERCTL /mmc/usr/lib /usr/lib"
 
 for dir in $PAGERCTL_SEARCH_DIRS; do
     if [ -z "$PAGERCTL_PY" ] && [ -f "$dir/pagerctl.py" ]; then
