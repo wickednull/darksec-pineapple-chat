@@ -12,7 +12,17 @@ _PAYLOAD_AUTHOR_NAME="wickednull"
 _PAYLOAD_VERSION="2.0"
 _PAYLOAD_DESCRIPTION="Mesh + Web Chat Client for WiFi Pineapple Pager"
 
-PAYLOAD_DIR="/root/payloads/user/general/darksec-chat"
+SCRIPT_PATH="$0"
+case "$SCRIPT_PATH" in
+    /*) ;;
+    *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+esac
+
+PAYLOAD_DIR="$(dirname "$SCRIPT_PATH")"
+PAYLOAD_DIR="$(cd "$PAYLOAD_DIR" 2>/dev/null && pwd)"
+if [ -z "$PAYLOAD_DIR" ]; then
+    PAYLOAD_DIR="$(pwd)"
+fi
 DATA_DIR="$PAYLOAD_DIR/data"
 
 cd "$PAYLOAD_DIR" || {
@@ -21,30 +31,36 @@ cd "$PAYLOAD_DIR" || {
 }
 
 #
-# Find and setup pagerctl dependencies (libpagerctl.so + pagerctl.py)
-# lib/ is the canonical location -- check it first, then payload root, then external PAGERCTL
+# Find and setup pagerctl dependencies.
+# pagerctl.py and libpagerctl.so may come from different locations, so find
+# them independently and stage both into lib/ for Python's ctypes loader.
 #
-PAGERCTL_FOUND=false
-for dir in "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR" "/mmc/root/payloads/user/utilities/PAGERCTL"; do
-    if [ -f "$dir/libpagerctl.so" ] && [ -f "$dir/pagerctl.py" ]; then
-        PAGERCTL_DIR="$dir"
-        PAGERCTL_FOUND=true
-        break
+PAGERCTL_PY=""
+PAGERCTL_SO=""
+PAGERCTL_SEARCH_DIRS="$PAYLOAD_DIR/lib $PAYLOAD_DIR /mmc/root/payloads/user/utilities/PAGERCTL /root/payloads/user/utilities/PAGERCTL /mmc/usr/lib /usr/lib"
+
+for dir in $PAGERCTL_SEARCH_DIRS; do
+    if [ -z "$PAGERCTL_PY" ] && [ -f "$dir/pagerctl.py" ]; then
+        PAGERCTL_PY="$dir/pagerctl.py"
+    fi
+    if [ -z "$PAGERCTL_SO" ] && [ -f "$dir/libpagerctl.so" ]; then
+        PAGERCTL_SO="$dir/libpagerctl.so"
     fi
 done
 
-if [ "$PAGERCTL_FOUND" = false ]; then
+if [ -z "$PAGERCTL_PY" ] || [ -z "$PAGERCTL_SO" ]; then
     LOG ""
     LOG "red" "=== MISSING DEPENDENCY ==="
     LOG ""
-    LOG "red" "libpagerctl.so and pagerctl.py not found!"
+    [ -z "$PAGERCTL_PY" ] && LOG "red" "pagerctl.py not found!"
+    [ -z "$PAGERCTL_SO" ] && LOG "red" "libpagerctl.so not found!"
     LOG ""
     LOG "Searched:"
-    for dir in "$PAYLOAD_DIR/lib" "$PAYLOAD_DIR" "/mmc/root/payloads/user/utilities/PAGERCTL"; do
+    for dir in $PAGERCTL_SEARCH_DIRS; do
         LOG "  $dir"
     done
     LOG ""
-    LOG "Install PAGERCTL payload or copy files to:"
+    LOG "Install PAGERCTL or copy missing files to:"
     LOG "  $PAYLOAD_DIR/lib/"
     LOG ""
     LOG "Press any button to exit..."
@@ -52,12 +68,13 @@ if [ "$PAGERCTL_FOUND" = false ]; then
     exit 1
 fi
 
-# Copy to lib/ if found outside of it (payload root or external PAGERCTL)
-if [ "$PAGERCTL_DIR" != "$PAYLOAD_DIR/lib" ]; then
-    mkdir -p "$PAYLOAD_DIR/lib" 2>/dev/null
-    cp "$PAGERCTL_DIR/libpagerctl.so" "$PAYLOAD_DIR/lib/" 2>/dev/null
-    cp "$PAGERCTL_DIR/pagerctl.py" "$PAYLOAD_DIR/lib/" 2>/dev/null
-    LOG "green" "Copied pagerctl from $PAGERCTL_DIR to lib/"
+# Copy to lib/ so pagerctl.py can load ./libpagerctl.so reliably.
+mkdir -p "$PAYLOAD_DIR/lib" 2>/dev/null
+if [ "$PAGERCTL_PY" != "$PAYLOAD_DIR/lib/pagerctl.py" ]; then
+    cp "$PAGERCTL_PY" "$PAYLOAD_DIR/lib/pagerctl.py" 2>/dev/null
+fi
+if [ "$PAGERCTL_SO" != "$PAYLOAD_DIR/lib/libpagerctl.so" ]; then
+    cp "$PAGERCTL_SO" "$PAYLOAD_DIR/lib/libpagerctl.so" 2>/dev/null
 fi
 
 #

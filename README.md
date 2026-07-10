@@ -27,18 +27,31 @@ darksec/
 
 ## Install
 
+Copy the payload files to a directory under the Pager payload library. The directory name can be `darksec-pineapple-chat`, `darksec-chat`, or any other name because `payload.sh` now resolves its own location at runtime.
 
-The payload expects to run from:
+```sh
+scp -r darksec root@<pager-ip>:/root/payloads/user/general/darksec-pineapple-chat
+```
+
+Your Pager shell should show the payload files together:
 
 ```text
-/root/payloads/user/general/darksec-chat
+/root/payloads/user/general/darksec-pineapple-chat/
+├── README.md
+├── config.sh
+├── darksec_chat.py
+├── pagerctl.py
+└── payload.sh
 ```
 
 `payload.sh` looks for `libpagerctl.so` and `pagerctl.py` in:
 
-- `/root/payloads/user/general/darksec-chat/lib`
-- `/root/payloads/user/general/darksec-chat`
+- the payload directory's `lib/`
+- the payload directory itself
 - `/mmc/root/payloads/user/utilities/PAGERCTL`
+- `/root/payloads/user/utilities/PAGERCTL`
+- `/mmc/usr/lib`
+- `/usr/lib`
 
 ## Requirements
 
@@ -197,15 +210,17 @@ The selected theme is saved automatically and restored on the next launch.
 Copy `libpagerctl.so` and `pagerctl.py` into:
 
 ```text
-/root/payloads/user/general/darksec-chat/lib/
+/root/payloads/user/general/darksec-pineapple-chat/lib/
 ```
+
+If `pagerctl.py` is already in the payload directory but `libpagerctl.so` is missing, the launcher will still fail. Install PAGERCTL or copy `libpagerctl.so` into the payload directory or its `lib/` folder.
 
 ### Font rendering is basic
 
 Add a TTF font such as `DejaVuSansMono.ttf` to:
 
 ```text
-/root/payloads/user/general/darksec-chat/fonts/
+/root/payloads/user/general/darksec-pineapple-chat/fonts/
 ```
 
 ## Notes
