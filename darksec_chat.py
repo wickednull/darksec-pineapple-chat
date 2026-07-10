@@ -50,8 +50,8 @@ os.environ["LD_LIBRARY_PATH"] = (
     PAGERCTL_DIR + ":/mmc/usr/lib:/mmc/lib:" +
     os.environ.get("LD_LIBRARY_PATH", "")
 )
-sys.path.insert(0, PAGERCTL_DIR)
 sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, PAGERCTL_DIR)
 
 try:
     from pagerctl import Pager
