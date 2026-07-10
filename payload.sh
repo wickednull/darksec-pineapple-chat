@@ -60,6 +60,7 @@ cd "$PAYLOAD_DIR" || {
 #
 PAGERCTL_PY=""
 PAGERCTL_SO=""
+RUNTIME_LIB_DIR="/tmp/darksec-chat-lib"
 PAGERCTL_SEARCH_DIRS="$PAYLOAD_DIR/lib $PAYLOAD_DIR /tmp/lib /mmc/root/payloads/user/utilities/PAGERCTL /root/payloads/user/utilities/PAGERCTL /mmc/usr/lib /usr/lib"
 
 for dir in $PAGERCTL_SEARCH_DIRS; do
@@ -91,21 +92,28 @@ if [ -z "$PAGERCTL_PY" ] || [ -z "$PAGERCTL_SO" ]; then
     exit 1
 fi
 
-# Copy to lib/ so pagerctl.py can load ./libpagerctl.so reliably.
-mkdir -p "$PAYLOAD_DIR/lib" 2>/dev/null
-if [ "$PAGERCTL_PY" != "$PAYLOAD_DIR/lib/pagerctl.py" ]; then
-    cp "$PAGERCTL_PY" "$PAYLOAD_DIR/lib/pagerctl.py" 2>/dev/null
-fi
-if [ "$PAGERCTL_SO" != "$PAYLOAD_DIR/lib/libpagerctl.so" ]; then
-    cp "$PAGERCTL_SO" "$PAYLOAD_DIR/lib/libpagerctl.so" 2>/dev/null
+# Stage both files together in writable runtime storage so pagerctl.py can load
+# ./libpagerctl.so reliably even when Hak5 launches the payload from /tmp.
+rm -rf "$RUNTIME_LIB_DIR" 2>/dev/null
+mkdir -p "$RUNTIME_LIB_DIR" 2>/dev/null
+cp "$PAGERCTL_PY" "$RUNTIME_LIB_DIR/pagerctl.py" 2>/dev/null
+cp "$PAGERCTL_SO" "$RUNTIME_LIB_DIR/libpagerctl.so" 2>/dev/null
+
+if [ ! -f "$RUNTIME_LIB_DIR/pagerctl.py" ] || [ ! -f "$RUNTIME_LIB_DIR/libpagerctl.so" ]; then
+    LOG "red" "Failed to stage pagerctl runtime files."
+    LOG "red" "Source py: $PAGERCTL_PY"
+    LOG "red" "Source so: $PAGERCTL_SO"
+    LOG "red" "Target: $RUNTIME_LIB_DIR"
+    WAIT_FOR_INPUT >/dev/null 2>&1
+    exit 1
 fi
 
 #
 # Setup local paths for bundled Python modules and native libs
 #
 export PATH="/mmc/usr/bin:$PATH"
-export PYTHONPATH="$PAYLOAD_DIR/lib:$PAYLOAD_DIR:$PYTHONPATH"
-export LD_LIBRARY_PATH="/mmc/usr/lib:/mmc/lib:$PAYLOAD_DIR/lib:$LD_LIBRARY_PATH"
+export PYTHONPATH="$RUNTIME_LIB_DIR:$PAYLOAD_DIR:$PYTHONPATH"
+export LD_LIBRARY_PATH="$RUNTIME_LIB_DIR:/mmc/usr/lib:/mmc/lib:$LD_LIBRARY_PATH"
 
 # Source config
 if [ -f "$PAYLOAD_DIR/config.sh" ]; then
@@ -226,6 +234,8 @@ mkdir -p "$LOG_DIR" 2>/dev/null
     echo "PAYLOAD_DIR=$PAYLOAD_DIR"
     echo "PAGERCTL_PY=$PAGERCTL_PY"
     echo "PAGERCTL_SO=$PAGERCTL_SO"
+    echo "RUNTIME_LIB_DIR=$RUNTIME_LIB_DIR"
+    ls -l "$RUNTIME_LIB_DIR"
     echo "PYTHON=$PYTHON"
     sync
 } > "$LOG_FILE" 2>&1
@@ -249,7 +259,7 @@ while true; do
         echo "step=before_python_launch"
         sync
     } >> "$LOG_FILE" 2>&1
-    "$PYTHON" -u "$PAYLOAD_DIR/darksec_chat.py" "$PAYLOAD_DIR/lib" >> "$LOG_FILE" 2>&1
+    "$PYTHON" -u "$PAYLOAD_DIR/darksec_chat.py" "$RUNTIME_LIB_DIR" >> "$LOG_FILE" 2>&1
     EXIT_CODE=$?
 
     # Exit code 42 = hand off to another payload
