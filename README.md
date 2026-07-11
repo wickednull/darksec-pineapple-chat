@@ -1,99 +1,67 @@
-# DarkSec Chat for WiFi Pineapple Pager
+# DarkSec-Chat for WiFi Pineapple Pager
 
-This payload sends and receives messages from `https://darksec.uk/chat` using
-the site's JSON API and Hak5's native Pager interface.
+The themed `pagerctl` application connects directly to
+`https://darksec.uk/chat` through its JSON API while retaining mesh chat,
+history, scrolling, brightness controls, and all four visual themes.
 
-## Why the native interface
+## Controls
 
-The active payload does not stop `pineapplepager` or take over the LCD through
-`pagerctl`. Button input uses `WAIT_FOR_INPUT`, output uses `LOG`, and pressing
-A invokes the built-in `TEXT_PICKER` directly. This is the same supported flow
-used by Hak5's picker examples and avoids competing with the service that owns
-the Pager buttons and keyboard.
+- A/green: open the native Pager `TEXT_PICKER`, then return to chat and send
+- Up/down: scroll messages
+- B/red: pause menu
+- Power: exit
 
-Network polling runs in a separate process. Slow DNS, TLS, or API responses do
-not block button handling.
+## Themes
 
-## Features
+The pause menu retains DarkSec, Amber CRT, Matrix, and Ice themes. The selected
+theme is stored at `/root/loot/darksec-chat/theme.txt`.
 
-- A/green opens the native system keyboard.
-- B/red or Power exits.
-- New messages appear through the native Pager log interface.
-- Incoming messages poll incrementally with `GET /api/chat?after=<id>`.
-- Outgoing messages use `POST /api/chat` with JSON.
-- The initial sync shows only the latest eight messages.
-- Poll state and diagnostic logs persist under `/root/loot/darksec-chat/`.
-- No `requests`, `pagerctl.py`, or `libpagerctl.so` dependency.
-
-## Files
+## Required files
 
 ```text
-payload.sh          Native Pager UI and responsive input loop
-darksec_native.py   Dependency-free DarkSec API helper
-config.sh           API URL and username
-darksec_chat.py     Legacy custom-LCD/mesh implementation; not launched
-pagerctl.py         Legacy custom-LCD wrapper; not required
+payload.sh
+darksec_chat.py
+config.sh
+pagerctl.py
+lib/libpagerctl.so
 ```
 
-## Requirements
+The launcher can also use a PAGERCTL installation from the standard Pager
+utility directories. Python 3 and `python3-ctypes` are required.
 
-- WiFi Pineapple Pager with Internet access
-- Python 3
-- Working device date/time for HTTPS certificate validation
-
-## Installation
-
-Copy at least these three files into one Pager payload directory:
+## DarkSec API
 
 ```text
-/root/payloads/user/general/darksec-pineapple-chat/
-  payload.sh
-  darksec_native.py
-  config.sh
+GET  https://darksec.uk/api/chat
+GET  https://darksec.uk/api/chat?after=<last_id>
+POST https://darksec.uk/api/chat
 ```
 
-Hak5 supplies the actual installed directory as `_PAYLOAD_HOME`; the launcher
-uses it automatically.
-
-## Configuration
-
-Edit `config.sh`:
-
-```sh
-export WEB_API_URL=""
-export USERNAME="PagerUser"
-```
-
-An empty URL selects `https://darksec.uk/api/chat`.
-
-## API contract
-
-```text
-GET /api/chat
-GET /api/chat?after=<last_message_id>
-POST /api/chat
-Content-Type: application/json
-```
-
-POST body:
+POST JSON:
 
 ```json
-{"username":"PagerUser","message":"hello from the Pager"}
+{"username":"PagerUser","message":"hello"}
 ```
 
-Messages returned by GET use `id`, `username`, `message`, and `created_at`.
+Configure the username or an alternate compatible endpoint in `config.sh`.
 
-## Diagnostics
+## Runtime design
 
-The persistent runtime log is:
+The Python application owns the LCD through `pagerctl`. Button presses are read
+from pagerctl's queued input events, with state polling as a fallback. When A
+is pressed, Python exits with code 43 after saving an input request. The
+launcher restores `pineapplepager`, invokes Hak5's native `TEXT_PICKER`, saves
+the result, stops the native UI again, and relaunches the themed application.
+
+Network sends run in the background, incoming website messages poll every
+second, and the LCD redraws only when visible state changes.
+
+## Logs
 
 ```text
 /root/loot/darksec-chat/darksec_chat.log
+/root/loot/darksec-chat/darksec_chat_app.log
 ```
 
-To test the endpoint independently over SSH:
-
-```sh
-python3 /root/payloads/user/general/darksec-pineapple-chat/darksec_native.py \
-  poll https://darksec.uk/api/chat /tmp/darksec-test-state.json
-```
+The launcher log records Python exits and every keyboard handoff. The app log
+records GET/POST failures and complete fatal tracebacks.

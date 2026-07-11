@@ -659,6 +659,17 @@ class ChatBackend:
             self._web_ok = True
             data = response['data']
             msgs = data if isinstance(data, list) else data.get('messages', [])
+            initial_sync = self._web_last_id <= 0
+            # The live endpoint can return hundreds of long news messages.
+            # Advance past the full history but only materialize the newest
+            # screenful on first connection so startup and buttons stay fast.
+            if initial_sync and len(msgs) > 20:
+                for old_msg in msgs[:-20]:
+                    try:
+                        self._web_last_id = max(self._web_last_id, int(old_msg.get('id', 0)))
+                    except (TypeError, ValueError):
+                        pass
+                msgs = msgs[-20:]
             for msg in msgs:
                 mid = msg.get('id')
                 if isinstance(mid, str) and mid.isdigit():
@@ -674,7 +685,9 @@ class ChatBackend:
                 t = msg.get('message','')
                 if t:
                     self.add_message(msg.get('username','Web'), t, 'web', msg.get('created_at'))
-                    self._mesh_send(f"[Web] {msg.get('username','WebUser')}: {t}")
+                    # Do not flood mesh peers with website backlog on startup.
+                    if not initial_sync:
+                        self._mesh_send(f"[Web] {msg.get('username','WebUser')}: {t}")
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             app_log(f"web_poll error={e}")
             self._web_ok = False
@@ -782,6 +795,22 @@ class ChatDisplay:
             self._dimmed = False
             try: self.p.set_brightness(self._bright)
             except: pass
+
+    def pressed_buttons(self):
+        """Consume the pagerctl event queue, with state polling as fallback."""
+        _, fallback_pressed, _ = self.p.poll_input()
+        pressed = 0
+        try:
+            while self.p.has_input_events():
+                event = self.p.get_input_event()
+                if not event:
+                    break
+                button, event_type, _ = event
+                if event_type == 1:  # PAGER_EVENT_PRESS
+                    pressed |= button
+        except (AttributeError, OSError):
+            pass
+        return pressed or fallback_pressed
 
     def _dim_check(self):
         if self._dimmed:
@@ -893,7 +922,9 @@ class ChatDisplay:
         mw = max(10, (W-12)//7) if self._ttf else (W-12)//6
 
         lines = []
-        for m in reversed(msgs[-200:]):
+        # Bound pixel measurement and wrapping work per frame. The complete
+        # recent history remains persisted; the LCD shows the newest 50 items.
+        for m in reversed(msgs[-50:]):
             s = m.get('sender','?')
             text = m.get('text','')
             tm = m.get('time','')
@@ -1019,7 +1050,7 @@ class ChatDisplay:
             self._text(4, H-self.FOOTER_H+2, "DPAD nav   A select   B backspace", t['MUTED'], ts=10)
             self.p.flip()
 
-            _, pressed, _ = self.p.poll_input()
+            pressed = self.pressed_buttons()
             if not pressed:
                 self.p.delay(20)
                 continue
@@ -1138,7 +1169,7 @@ class ChatDisplay:
 
         draw()
         while True:
-            _, pressed, _ = self.p.poll_input()
+            pressed = self.pressed_buttons()
             if not pressed:
                 self.p.delay(20)
                 continue
@@ -1238,7 +1269,7 @@ def main():
                                      msgs[-1].get('text') if msgs else None)
                 last_render = now
 
-            _, pressed, _ = display.p.poll_input()
+            pressed = display.pressed_buttons()
             if not pressed:
                 display.p.delay(50)
                 continue
