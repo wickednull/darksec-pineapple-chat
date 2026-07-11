@@ -1,3 +1,4 @@
+<img width="1408" height="768" alt="image" src="https://github.com/user-attachments/assets/d9cd930a-42f2-4204-a9ec-9711dc3a1d80" />
 # DARKSEC // PAGER CHAT
 
 > Field communications for the Hak5 WiFi Pineapple Pager.
