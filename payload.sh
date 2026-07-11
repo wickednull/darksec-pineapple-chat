@@ -98,20 +98,30 @@ while true; do
 
     REQUEST_KIND="$(cat "$INPUT_REQUEST_FILE" 2>/dev/null)"
     rm -f "$INPUT_REQUEST_FILE"
+    # Exit 43 is reserved exclusively for message entry. Do not skip the
+    # keyboard if the request breadcrumb was lost across the /tmp launcher or
+    # an installed-path mismatch.
+    [ "$REQUEST_KIND" = "message" ] || REQUEST_KIND="message"
     echo "step=keyboard_request kind=$REQUEST_KIND" >> "$LOG_FILE"
 
     # The Python UI has released pagerctl. Restore the native Pager UI and
     # invoke TEXT_PICKER from this original payload shell, exactly like Hak5's
     # supported examples.
     /etc/init.d/pineapplepager start 2>/dev/null
-    sleep 0.75
+    sleep 2
 
     if [ "$REQUEST_KIND" = "message" ]; then
         USER_TEXT="$(TEXT_PICKER "DarkSec message" "")"
         PICKER_CODE=$?
         echo "step=text_picker_done code=$PICKER_CODE length=${#USER_TEXT}" >> "$LOG_FILE"
         case "$PICKER_CODE" in
-            "$DUCKYSCRIPT_CANCELLED"|"$DUCKYSCRIPT_REJECTED"|"$DUCKYSCRIPT_ERROR") ;;
+            "$DUCKYSCRIPT_CANCELLED")
+                echo "step=text_picker_cancelled" >> "$LOG_FILE"
+                ;;
+            "$DUCKYSCRIPT_REJECTED"|"$DUCKYSCRIPT_ERROR")
+                echo "step=text_picker_error code=$PICKER_CODE" >> "$LOG_FILE"
+                ERROR_DIALOG "DarkSec keyboard failed (code $PICKER_CODE)"
+                ;;
             *) [ -n "$USER_TEXT" ] && printf '%s' "$USER_TEXT" > "$PENDING_MESSAGE_FILE" ;;
         esac
     fi
