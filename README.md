@@ -16,6 +16,10 @@ history, scrolling, brightness controls, and all four visual themes.
 The pause menu retains DarkSec, Amber CRT, Matrix, and Ice themes. The selected
 theme is stored at `/root/loot/darksec-chat/theme.txt`.
 
+The keyboard uses large, screen-filling keys and defaults to lowercase.
+Navigate with the D-pad, press A to select, use SHIFT/SHIFT^ to toggle letter
+case, press B to erase, and choose SEND from the bottom action row.
+
 ## Required files
 
 ```text

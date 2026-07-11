@@ -728,7 +728,7 @@ class ChatDisplay:
         ['Z','X','C','V','B','N','M','.',','],
         ['1','2','3','4','5','6','7','8','9','0'],
     ]
-    KBD_SPECIAL = [('SPACE',' '), ('BSP','\b'), ('SEND','\n')]
+    KBD_SPECIAL = [('SHIFT','shift'), ('SPACE',' '), ('BSP','\b'), ('SEND','\n')]
 
     def __init__(self):
         self.p = None
@@ -848,6 +848,11 @@ class ChatDisplay:
         if self._ttf:
             return self.p.ttf_width(t, self._font, ts)
         return self.p.text_width(t, s)
+
+    def _th(self, s=1, ts=13):
+        if self._ttf:
+            return self.p.ttf_height(self._font, ts)
+        return 8 * s
 
     # -- Splash --
 
@@ -999,51 +1004,65 @@ class ChatDisplay:
 
     def keyboard(self, prompt="Message:"):
         text = ""
+        shifted = False
         r, c = 0, 0
         sp_idx = -1
         GAP = 3
         W, H = self.W, self.H
-        hh = 18
+        hh = 19
         ph = 16
-        kh = 26
+        # Four 32px rows plus the action row fill the Pager display closely
+        # and are substantially easier to read than the previous 26px keys.
+        kh = 32
         sh = kh
         sy = hh + ph + 2
         rows = len(self.KBD_KEYS)
+        key_ts = 14
+        action_ts = 13
 
         while True:
             t = self.theme
             self.p.clear(t['BG'])
             self.p.fill_rect(0, 0, W, hh, t['PANEL'])
             self.p.fill_rect(0, hh-2, W, 2, t['ACCENT'])
-            self._text(4, 1, prompt, t['TITLE'], ts=11)
+            self._text(5, 1, prompt, t['TITLE'], ts=12)
 
             pv = text[-50:] if len(text)>50 else text
-            self._text(4, hh+1, pv+'_', t['TEXT'], ts=12)
+            self._text(5, hh+1, pv+'_', t['TEXT'], ts=13)
 
             y = sy
             for ri, row in enumerate(self.KBD_KEYS):
                 kw = (W - GAP*(len(row)+1)) // len(row)
                 for ci, key in enumerate(row):
+                    shown_key = key if shifted or not key.isalpha() else key.lower()
                     x = ci*(kw+GAP)+GAP
                     sel = (sp_idx<0 and ri==r and ci==c)
                     b = t['KEY_SEL'] if sel else t['KEY_BG']
                     self.p.fill_rect(x, y, kw, kh, b)
                     self.p.rect(x, y, kw, kh, t['ACCENT'] if sel else t['PANEL'])
-                    tw = self._tw(key, ts=12)
+                    if sel and kw > 4 and kh > 4:
+                        self.p.rect(x+1, y+1, kw-2, kh-2, t['HIGHLIGHT'])
+                    tw = self._tw(shown_key, ts=key_ts)
                     tx = x + (kw-tw)//2
-                    self._text(tx, y+(kh-self._tw('A',ts=12))//2, key, t['TEXT'], ts=12)
+                    ty = y + max(1, (kh-self._th(ts=key_ts))//2)
+                    self._text(tx, ty, shown_key, t['TEXT'], ts=key_ts)
                 y += kh + GAP
 
             # Specials
             sx = GAP
             for si, (label, _) in enumerate(self.KBD_SPECIAL):
-                sw = self._tw(label, ts=12)
-                kw = sw + 12
+                shown_label = "SHIFT^" if label == "SHIFT" and shifted else label
+                sw = self._tw(shown_label, ts=action_ts)
+                kw = sw + 18
                 sel = (sp_idx>=0 and sp_idx==si)
                 b = t['KEY_SEL'] if sel else t['KEY_BG']
                 self.p.fill_rect(sx, y, kw, sh, b)
                 self.p.rect(sx, y, kw, sh, t['ACCENT'] if sel else t['PANEL'])
-                self._text(sx+(kw-self._tw(label,ts=12))//2, y+(sh-self._tw('A',ts=12))//2, label, t['TEXT'], ts=12)
+                if sel and kw > 4 and sh > 4:
+                    self.p.rect(sx+1, y+1, kw-2, sh-2, t['HIGHLIGHT'])
+                tx = sx + (kw-self._tw(shown_label, ts=action_ts))//2
+                ty = y + max(1, (sh-self._th(ts=action_ts))//2)
+                self._text(tx, ty, shown_label, t['TEXT'], ts=action_ts)
                 sx += kw + GAP
 
             self.p.fill_rect(0, H-self.FOOTER_H, W, self.FOOTER_H, t['PANEL'])
@@ -1067,7 +1086,9 @@ class ChatDisplay:
                     sp_idx += 1
                 elif pressed & Pager.BTN_A:
                     _, act = self.KBD_SPECIAL[sp_idx]
-                    if act == '\n':
+                    if act == 'shift':
+                        shifted = not shifted
+                    elif act == '\n':
                         return text.strip()
                     elif act == '\b':
                         text = text[:-1]
@@ -1090,7 +1111,8 @@ class ChatDisplay:
                 elif pressed & Pager.BTN_RIGHT and c < len(self.KBD_KEYS[r])-1:
                     c += 1
                 elif pressed & Pager.BTN_A:
-                    text += self.KBD_KEYS[r][c]
+                    key = self.KBD_KEYS[r][c]
+                    text += key if shifted or not key.isalpha() else key.lower()
                 elif pressed & Pager.BTN_B:
                     text = text[:-1]
 
