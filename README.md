@@ -6,7 +6,7 @@
 > Field communications for the Hak5 WiFi Pineapple Pager.
 
 DarkSec-Chat turns the Pager into a compact, themed communications console. It
-bridges directly into the live chat at [darksec.uk/chat](https://darksec.uk/chat),
+bridges directly into the live chat also,
 discovers nearby DarkSec Pagers over the local network, and keeps the interface
 fast enough for actual handheld use.
 
