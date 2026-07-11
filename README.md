@@ -1,10 +1,12 @@
 <img width="1408" height="768" alt="image" src="https://github.com/user-attachments/assets/d9cd930a-42f2-4204-a9ec-9711dc3a1d80" />
+
+
 # DARKSEC // PAGER CHAT
 
 > Field communications for the Hak5 WiFi Pineapple Pager.
 
 DarkSec-Chat turns the Pager into a compact, themed communications console. It
-bridges directly into the live chat at [darksec.uk/chat](https://darksec.uk/chat),
+bridges directly into the live chat also,
 discovers nearby DarkSec Pagers over the local network, and keeps the interface
 fast enough for actual handheld use.
 
@@ -320,6 +322,3 @@ PAGERCTL remains governed by its included MIT license and original
 `Copyright (c) 2025 brAinphreAk` notice. Preserve that notice when
 redistributing `pagerctl.py` or PAGERCTL components.
 
-No broader project license is asserted here beyond licenses already attached
-to third-party components. Add a root project license before redistributing the
-entire repository under a single set of terms.
