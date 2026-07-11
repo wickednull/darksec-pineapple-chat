@@ -6,7 +6,7 @@ history, scrolling, brightness controls, and all four visual themes.
 
 ## Controls
 
-- A/green: open the native Pager `TEXT_PICKER`, then return to chat and send
+- A/green: open the responsive in-app Pager keyboard and send
 - Up/down: scroll messages
 - B/red: pause menu
 - Power: exit
@@ -48,10 +48,11 @@ Configure the username or an alternate compatible endpoint in `config.sh`.
 ## Runtime design
 
 The Python application owns the LCD through `pagerctl`. Button presses are read
-from pagerctl's queued input events, with state polling as a fallback. When A
-is pressed, Python exits with code 43 after saving an input request. The
-launcher restores `pineapplepager`, invokes Hak5's native `TEXT_PICKER`, saves
-the result, stops the native UI again, and relaunches the themed application.
+from pagerctl's queued input events, with state polling as a fallback. Pressing
+A opens the keyboard inside the same LCD session, so composing a message does
+not stop services, black the screen, or restart the chat application. The
+native DuckyScript `TEXT_PICKER` is not used after takeover because current
+firmware rejects it with code 1 once the custom LCD session has started.
 
 Network sends run in the background, incoming website messages poll every
 second, and the LCD redraws only when visible state changes.

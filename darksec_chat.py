@@ -1050,10 +1050,13 @@ class ChatDisplay:
             self._text(4, H-self.FOOTER_H+2, "DPAD nav   A select   B backspace", t['MUTED'], ts=10)
             self.p.flip()
 
-            pressed = self.pressed_buttons()
-            if not pressed:
-                self.p.delay(20)
-                continue
+            # Draw once, then wait for an actual event. Repainting the entire
+            # keyboard while idle makes button handling lag on the Pager.
+            pressed = 0
+            while not pressed:
+                pressed = self.pressed_buttons()
+                if not pressed:
+                    self.p.delay(30)
 
             if sp_idx >= 0:
                 if pressed & Pager.BTN_UP:
@@ -1280,8 +1283,15 @@ def main():
             elif pressed & Pager.BTN_DOWN:
                 scroll += 1
             elif pressed & Pager.BTN_A:
-                app_log("input A pressed; requesting system keyboard")
-                request_system_text('message')
+                app_log("input A pressed; opening pagerctl keyboard")
+                message = display.keyboard("DarkSec message:")
+                if message:
+                    app_log(f"inline keyboard accepted len={len(message)}")
+                    backend.send_message(message)
+                    scroll = 0
+                    last_render_state = None
+                else:
+                    app_log("inline keyboard closed empty")
             elif pressed & Pager.BTN_B:
                 a = display.pause_menu(pc, wo, len(msgs), backend.username, get_local_ip())
                 if a in ('exit', 'menu'): running = False
