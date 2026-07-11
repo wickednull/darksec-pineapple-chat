@@ -188,6 +188,8 @@ The selected theme is saved automatically and restored on the next launch.
 ### Payload starts then returns or screen goes blank
 
 DarkSec-Chat writes a persistent launch log before it takes over the display, then stops the Pager UI service, runs the Python app, and restores the service when Python exits.
+The launcher uses Hak5's `_PAYLOAD_HOME` variable because Pager payloads execute
+from `/tmp`; directory-name search remains only as a compatibility fallback.
 
 Check:
 
@@ -199,8 +201,13 @@ Check:
 ### Website chat does not connect
 
 - Confirm the Pager has internet access.
+- From an SSH session on the Pager, run `curl -v https://darksec.uk/api/chat`
+  and confirm it returns JSON. This tests the Pager's DNS, clock/TLS, and
+  Internet route independently of the display app.
 - Confirm the endpoint responds to `GET /api/chat`.
 - If using your own website, confirm it supports `GET /api/chat?after=<id>`.
+- Review `/root/loot/darksec-chat/darksec_chat_app.log` for `web_poll failed`;
+  status `0` indicates a DNS, TLS, timeout, or routing failure before HTTP.
 
 ### Messages send but do not appear
 

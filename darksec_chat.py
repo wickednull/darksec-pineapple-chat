@@ -626,8 +626,8 @@ class ChatBackend:
 
     def _web_poll(self):
         while self.running:
-            time.sleep(3)
             self._poll_web_once()
+            time.sleep(3)
 
     def _web_poll_url(self):
         if self._web_last_id <= 0:

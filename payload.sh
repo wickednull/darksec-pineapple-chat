@@ -12,16 +12,23 @@ _PAYLOAD_AUTHOR_NAME="wickednull"
 _PAYLOAD_VERSION="2.0"
 _PAYLOAD_DESCRIPTION="Mesh + Web Chat Client for WiFi Pineapple Pager"
 
-SCRIPT_PATH="$0"
-case "$SCRIPT_PATH" in
-    /*) ;;
-    *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
-esac
+# Hak5 runs payloads from /tmp and exposes the real install directory through
+# _PAYLOAD_HOME. Prefer that documented path; retain fallbacks for older
+# firmware and manual SSH launches where the variable may not be present.
+if [ -n "${_PAYLOAD_HOME:-}" ] && [ -f "${_PAYLOAD_HOME}/darksec_chat.py" ]; then
+    PAYLOAD_DIR="${_PAYLOAD_HOME}"
+else
+    SCRIPT_PATH="$0"
+    case "$SCRIPT_PATH" in
+        /*) ;;
+        *) SCRIPT_PATH="$(pwd)/$SCRIPT_PATH" ;;
+    esac
 
-PAYLOAD_DIR="$(dirname "$SCRIPT_PATH")"
-PAYLOAD_DIR="$(cd "$PAYLOAD_DIR" 2>/dev/null && pwd)"
-if [ -z "$PAYLOAD_DIR" ]; then
-    PAYLOAD_DIR="$(pwd)"
+    PAYLOAD_DIR="$(dirname "$SCRIPT_PATH")"
+    PAYLOAD_DIR="$(cd "$PAYLOAD_DIR" 2>/dev/null && pwd)"
+    if [ -z "$PAYLOAD_DIR" ]; then
+        PAYLOAD_DIR="$(pwd)"
+    fi
 fi
 
 if [ ! -f "$PAYLOAD_DIR/darksec_chat.py" ]; then
