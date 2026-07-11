@@ -275,14 +275,16 @@ encryption, replay protection, and an optional authenticated pub/sub transport.
 
 - **wickednull** — DarkSec-Chat author, Pager integration, UI, web bridge, mesh
   transport, themes, keyboard, and ongoing development.
+- **[sinXne0](https://github.com/sinXne0)** — project partner and developer of
+  the DarkSec website at `darksec.uk`, including the website chat and API that
+  power the Pager's web communications bridge.
 - **brAinphreAk** — creator and copyright holder of **PAGERCTL**, the Pager
   hardware-control library and Python wrapper that make the custom LCD,
   buttons, LEDs, brightness, fonts, and responsive input possible. The bundled
   `pagerctl.py` carries the original 2025 MIT license and copyright notice.
 - **Hak5** — creator of the WiFi Pineapple Pager, its payload platform,
   DuckyScript environment, and device ecosystem.
-- **DarkSec** — operator of `darksec.uk` and the chat service/API this payload
-  connects to.
+- **DarkSec** — the community and service this payload connects to.
 
 DarkSec-Chat is an independent community project. It is not an official Hak5
 product and is not presented as endorsed by Hak5 or the PAGERCTL author.
