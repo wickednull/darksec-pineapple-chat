@@ -13,7 +13,7 @@ Dependencies: python3, python3-ctypes, pagerctl
 HTTP transport: urllib.request with an automatic curl fallback
 """
 
-import os, sys, json, time, socket, threading, shutil, subprocess
+import os, sys, json, time, socket, threading, shutil, subprocess, traceback
 from datetime import datetime
 from collections import deque
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -512,11 +512,21 @@ class ChatBackend:
         app_log(f"send_message start len={len(t)} web_enabled={self._web_enabled} peers={self.peer_count()}")
         self.add_message(self.username, t, 'self')
         app_log("send_message after_add_self")
-        self._mesh_send(t)
-        app_log("send_message after_mesh")
-        if self._web_enabled:
-            self._web_post(t)
-        app_log("send_message done")
+        # Never make the display/input loop wait for mesh sockets or HTTPS.
+        # The local message appears immediately while delivery completes in
+        # the background.
+        threading.Thread(target=self._send_worker, args=(t,), daemon=True).start()
+
+    def _send_worker(self, text):
+        try:
+            self._mesh_send(text)
+            app_log("send_message after_mesh")
+            if self._web_enabled and not self._web_post(text):
+                self.add_message("System", "Web send failed - check connection.", "system")
+            app_log("send_message done")
+        except Exception as error:
+            app_log(f"send_message worker_error={error}")
+            self.add_message("System", "Send failed - check logs.", "system")
 
     # -- Mesh --
 
@@ -627,7 +637,7 @@ class ChatBackend:
     def _web_poll(self):
         while self.running:
             self._poll_web_once()
-            time.sleep(3)
+            time.sleep(1)
 
     def _web_poll_url(self):
         if self._web_last_id <= 0:
@@ -679,14 +689,17 @@ class ChatBackend:
                 self._web_url, {"username": self.username, "message": text})
             if response['ok']:
                 app_log("web_post ok")
+                return True
             else:
                 app_log("web_post failed status=%s error=%s" %
                         (response['status'], response['error']))
+                return False
         except (OSError, ValueError, TypeError) as e:
             app_log(f"web_post error={e}")
-            pass
+            return False
         except Exception as e:
             app_log(f"web_post unexpected_error={e}")
+            return False
 
 
 # ===================================================================
@@ -1175,25 +1188,17 @@ def main():
         display = ChatDisplay()
         display.splash()
 
-        # Username prompt
-        if not os.path.isfile(USERNAME_FILE) or not username:
-            display.username_screen(username)
-            # Wait for A to start keyboard
-            while True:
-                _, pressed, _ = display.p.poll_input()
-                if pressed & Pager.BTN_A:
-                    break
-                display.p.delay(20)
-            display.p.clear(display.theme['BG'])
-            result = display.keyboard("Username:")
-            if result:
-                username = result
-                try:
-                    with open(USERNAME_FILE, 'w') as f:
-                        f.write(username)
-                except OSError:
-                    pass
-                backend.username = username
+        # Use the configured/default name on first launch. Message entry is
+        # exclusively handled by the native system TEXT_PICKER.
+        if not username:
+            username = 'PagerUser'
+        if not os.path.isfile(USERNAME_FILE):
+            try:
+                with open(USERNAME_FILE, 'w') as f:
+                    f.write(username)
+            except OSError:
+                pass
+        backend.username = username
 
         backend.start()
 
@@ -1212,16 +1217,30 @@ def main():
         scroll = 0
         running = True
         last_save = time.time()
+        last_render = 0.0
+        last_render_state = None
 
         while running:
             msgs = backend.messages()
             pc = backend.peer_count()
             wo = backend.web_connected()
-            scroll = display.chat_view(msgs, scroll, pc, wo)
+            # LCD flips are relatively expensive on the Pager.  Render only
+            # when visible state changes, plus a slow safety refresh, instead
+            # of repainting the complete screen roughly 50 times per second.
+            render_state = (len(msgs), scroll, pc, wo,
+                            msgs[-1].get('time') if msgs else None,
+                            msgs[-1].get('text') if msgs else None)
+            now = time.monotonic()
+            if render_state != last_render_state or now - last_render >= 1.0:
+                scroll = display.chat_view(msgs, scroll, pc, wo)
+                last_render_state = (len(msgs), scroll, pc, wo,
+                                     msgs[-1].get('time') if msgs else None,
+                                     msgs[-1].get('text') if msgs else None)
+                last_render = now
 
             _, pressed, _ = display.p.poll_input()
             if not pressed:
-                display.p.delay(20)
+                display.p.delay(50)
                 continue
             display.activity()
 
@@ -1230,6 +1249,7 @@ def main():
             elif pressed & Pager.BTN_DOWN:
                 scroll += 1
             elif pressed & Pager.BTN_A:
+                app_log("input A pressed; requesting system keyboard")
                 request_system_text('message')
             elif pressed & Pager.BTN_B:
                 a = display.pause_menu(pc, wo, len(msgs), backend.username, get_local_ip())
@@ -1244,11 +1264,12 @@ def main():
                     last_save = time.time()
                 except OSError:
                     pass
-            display.p.delay(16)
+            display.p.delay(50)
 
     except KeyboardInterrupt:
         pass
     except Exception as e:
+        app_log("fatal_error=%s\n%s" % (e, traceback.format_exc()))
         try:
             if display and display.p:
                 display.p.clear(0x0000)

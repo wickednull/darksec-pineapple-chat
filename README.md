@@ -9,6 +9,9 @@ DarkSec-Chat is a WiFi Pineapple Pager payload that lets the Pager join the Dark
 - Direct website chat bridge for the DarkSec `/api/chat` endpoint.
 - Efficient polling with `GET /api/chat?after=<last_id>` after the first sync.
 - Message send with `POST /api/chat` and JSON body `{ "username": "...", "message": "..." }`.
+- Native Pager `TEXT_PICKER` message entry when A is pressed.
+- Event-driven LCD rendering, one-second receive polling, and background sends
+  for responsive controls even when the network is slow.
 - Mesh peer discovery over UDP and message exchange over TCP.
 - Local persistence for username and recent messages under `/root/loot/darksec-chat/`.
 - Optional TTF font rendering when a compatible font is available.

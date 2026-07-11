@@ -253,9 +253,11 @@ SPINNER_ID=$(START_SPINNER "Starting DarkSec-Chat...")
     echo "step=before_pineapplepager_stop"
     sync
 } >> "$LOG_FILE" 2>&1
-/etc/init.d/pineapplepager stop 2>/dev/null
-sleep 0.5
+# Stop the spinner while its owning UI service is still available.
+sleep 0.3
 STOP_SPINNER "$SPINNER_ID" 2>/dev/null
+/etc/init.d/pineapplepager stop 2>/dev/null
+sleep 0.3
 
 # Payload loop -- supports exit code 42 handoff
 NEXT_PAYLOAD_FILE="$DATA_DIR/.next_payload"
@@ -279,12 +281,25 @@ while true; do
         } >> "$LOG_FILE" 2>&1
 
         /etc/init.d/pineapplepager start 2>/dev/null
-        sleep 0.5
+        # The native picker is served by pineapplepager. Wait for the service
+        # rather than imposing a long fixed delay on every keypress.
+        PICKER_WAIT=0
+        while [ "$PICKER_WAIT" -lt 10 ]; do
+            /etc/init.d/pineapplepager status >/dev/null 2>&1 && break
+            sleep 0.2
+            PICKER_WAIT=$((PICKER_WAIT + 1))
+        done
+        sleep 0.3
 
         REQUEST_KIND="$(cat "$INPUT_REQUEST_FILE" 2>/dev/null)"
         rm -f "$INPUT_REQUEST_FILE"
 
         if [ "$REQUEST_KIND" = "message" ]; then
+            {
+                echo "step=before_text_picker"
+                command -v TEXT_PICKER 2>/dev/null || true
+                sync
+            } >> "$LOG_FILE" 2>&1
             USER_TEXT=$(TEXT_PICKER "DarkSec message" "")
             PICKER_CODE=$?
             {
@@ -294,12 +309,18 @@ while true; do
             if [ "$PICKER_CODE" -eq 0 ] && [ -n "$USER_TEXT" ]; then
                 printf "%s" "$USER_TEXT" > "$PENDING_MESSAGE_FILE"
             fi
+        else
+            {
+                echo "step=input_request_invalid kind=$REQUEST_KIND"
+                sync
+            } >> "$LOG_FILE" 2>&1
         fi
 
         SPINNER_ID=$(START_SPINNER "Returning to DarkSec...")
-        /etc/init.d/pineapplepager stop 2>/dev/null
-        sleep 0.5
+        sleep 0.2
         STOP_SPINNER "$SPINNER_ID" 2>/dev/null
+        /etc/init.d/pineapplepager stop 2>/dev/null
+        sleep 0.3
         continue
     fi
 
