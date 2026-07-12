@@ -89,6 +89,8 @@ or firewall rules may block UDP `9999` or TCP `9998`.
 
 - Chronological transcript with the newest messages at the bottom.
 - Automatic follow mode while viewing the newest messages.
+- Revision-based web-message follow mode remains pinned to the true newest
+  message even when the saved transcript has reached its 500-message limit.
 - Stable scroll position while reviewing older traffic.
 - Large in-app keyboard with lowercase, `SHIFT`, numbers, punctuation,
   `SPACE`, `BSP`, and `SEND`.

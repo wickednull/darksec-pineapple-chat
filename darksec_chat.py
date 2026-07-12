@@ -496,6 +496,7 @@ class ChatBackend:
 
         self._msgs = deque(maxlen=500)
         self._msg_lock = threading.Lock()
+        self._message_revision = 0
         self._peers = {}
         self._peer_lock = threading.Lock()
         self._mesh_ok = False
@@ -533,6 +534,10 @@ class ChatBackend:
     def messages(self):
         with self._msg_lock:
             return list(self._msgs)
+
+    def message_revision(self):
+        with self._msg_lock:
+            return self._message_revision
 
     def peer_count(self):
         with self._peer_lock:
@@ -601,19 +606,34 @@ class ChatBackend:
             return None
 
     def restore_messages(self, saved):
+        if not isinstance(saved, list):
+            return
         with self._msg_lock:
             for m in saved:
-                self._msgs.append(m)
+                if isinstance(m, dict):
+                    sender = m.get('sender', '?')
+                    text = m.get('text', '')
+                    self._msgs.append({
+                        'sender': (sender if isinstance(sender, str) else str(sender))[:32],
+                        'text': (text if isinstance(text, str) else str(text))[:1000],
+                        'time': m.get('time', '') if isinstance(m.get('time', ''), str) else '',
+                        'source': m.get('source', 'system')
+                        if m.get('source') in ('self', 'web', 'mesh', 'system') else 'system',
+                    })
+                    self._message_revision += 1
 
     def add_message(self, sender, text, source, when=None):
+        sender = sender if isinstance(sender, str) else str(sender)
+        text = text if isinstance(text, str) else str(text)
         msg = {
-            'sender': sender,
-            'text': text,
+            'sender': sender[:32],
+            'text': text[:1000],
             'time': display_time(when),
             'source': source,
         }
         with self._msg_lock:
             self._msgs.append(msg)
+            self._message_revision += 1
 
     def send_message(self, text):
         t = text.strip()
@@ -782,7 +802,18 @@ class ChatBackend:
                 return
             self._web_ok = True
             data = response['data']
-            msgs = data if isinstance(data, list) else data.get('messages', [])
+            if isinstance(data, list):
+                msgs = data
+            elif isinstance(data, dict):
+                msgs = data.get('messages', [])
+            else:
+                app_log("web_poll invalid response type=%s" % type(data).__name__)
+                self._web_ok = False
+                return
+            if not isinstance(msgs, list):
+                app_log("web_poll invalid messages type=%s" % type(msgs).__name__)
+                self._web_ok = False
+                return
             initial_sync = self._web_last_id <= 0
             # The live endpoint can return hundreds of long news messages.
             # Advance past the full history but only materialize the newest
@@ -795,6 +826,8 @@ class ChatBackend:
                         pass
                 msgs = msgs[-20:]
             for msg in msgs:
+                if not isinstance(msg, dict):
+                    continue
                 mid = msg.get('id')
                 if isinstance(mid, str) and mid.isdigit():
                     mid = int(mid)
@@ -806,12 +839,18 @@ class ChatBackend:
                 if dedupe_key in self._web_seen or msg.get('username','') == self.username:
                     continue
                 self._web_seen.add(dedupe_key)
+                if len(self._web_seen) > 2000:
+                    # IDs older than _web_last_id will not be requested again.
+                    self._web_seen.clear()
+                    self._web_seen.add(dedupe_key)
                 t = msg.get('message','')
-                if t:
-                    self.add_message(msg.get('username','Web'), t, 'web', msg.get('created_at'))
+                if isinstance(t, str) and t:
+                    sender = msg.get('username', 'Web')
+                    sender = sender if isinstance(sender, str) else 'Web'
+                    self.add_message(sender, t, 'web', msg.get('created_at'))
                     # Do not flood mesh peers with website backlog on startup.
                     if not initial_sync:
-                        self._mesh_send(f"[Web] {msg.get('username','WebUser')}: {t}")
+                        self._mesh_send(f"[Web] {sender}: {t}")
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as e:
             app_log(f"web_poll error={e}")
             self._web_ok = False
@@ -1419,29 +1458,32 @@ def main():
         last_save = time.time()
         last_render = 0.0
         last_render_state = None
-        last_message_count = 0
+        last_message_revision = -1
 
         while running:
             msgs = backend.messages()
             pc = backend.peer_count()
             wo = backend.web_connected()
-            if len(msgs) != last_message_count:
-                # Follow new messages only when already at the bottom. Preserve
-                # the reader's position when they have scrolled into history.
-                max_scroll = getattr(display, '_max_scroll', 0)
-                if scroll >= max_scroll:
+            message_revision = backend.message_revision()
+            if message_revision != last_message_revision:
+                # The deque can remain at 500 entries while a new web message
+                # replaces the oldest one, so count changes are not a reliable
+                # new-message signal. Follow revisions whenever the reader was
+                # at the previous bottom; preserve deliberate history reading.
+                previous_bottom = getattr(display, '_max_scroll', 0)
+                if scroll >= previous_bottom:
                     scroll = 10**9
-                last_message_count = len(msgs)
+                last_message_revision = message_revision
             # LCD flips are relatively expensive on the Pager.  Render only
             # when visible state changes, plus a slow safety refresh, instead
             # of repainting the complete screen roughly 50 times per second.
-            render_state = (len(msgs), scroll, pc, wo,
+            render_state = (message_revision, scroll, pc, wo,
                             msgs[-1].get('time') if msgs else None,
                             msgs[-1].get('text') if msgs else None)
             now = time.monotonic()
             if render_state != last_render_state or now - last_render >= 1.0:
                 scroll = display.chat_view(msgs, scroll, pc, wo)
-                last_render_state = (len(msgs), scroll, pc, wo,
+                last_render_state = (message_revision, scroll, pc, wo,
                                      msgs[-1].get('time') if msgs else None,
                                      msgs[-1].get('text') if msgs else None)
                 last_render = now
