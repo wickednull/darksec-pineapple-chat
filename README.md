@@ -147,6 +147,8 @@ the action row, and moving down from the action row returns to the top.
 Notification modes are LED, sound, both, and silent. Startup modes are Remember,
 Web only, Mesh only, and Both. Disabling Web or Mesh stops its background worker
 so unused networking does not consume Pager resources.
+Changing the notification mode plays an immediate preview. Incoming-message
+notification attempts and hardware errors are recorded in the app log.
 
 ## Themes
 

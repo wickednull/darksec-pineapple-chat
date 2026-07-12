@@ -575,6 +575,7 @@ class ChatBackend:
         self._msgs = deque(maxlen=self._retention)
         self._msg_lock = threading.Lock()
         self._message_revision = 0
+        self._incoming_revision = 0
         self._peers = {}
         self._peer_lock = threading.Lock()
         self._mesh_ok = False
@@ -663,6 +664,10 @@ class ChatBackend:
     def message_revision(self):
         with self._msg_lock:
             return self._message_revision
+
+    def incoming_revision(self):
+        with self._msg_lock:
+            return self._incoming_revision
 
     def peer_count(self):
         with self._peer_lock:
@@ -794,6 +799,8 @@ class ChatBackend:
         with self._msg_lock:
             self._msgs.append(msg)
             self._message_revision += 1
+            if source in ('web', 'mesh'):
+                self._incoming_revision += 1
 
     def send_message(self, text):
         t = text.strip()
@@ -1100,6 +1107,7 @@ class ChatDisplay:
         self._last_act = time.time()
         self._dimmed = False
         self._last_led = None
+        self._notification_until = 0.0
         self._init()
 
     def _discover_font(self):
@@ -1188,17 +1196,28 @@ class ChatDisplay:
 
     def notify_new_message(self):
         mode = self._notification_mode
-        try:
-            if mode in ('led', 'both'):
+        if mode in ('led', 'both'):
+            self._notification_until = time.monotonic() + 2.0
+            self._last_led = None
+            try:
                 self.p.led_rgb('a', 0, 255, 80)
-                # Force the next chat render to restore normal status LEDs.
-                self._last_led = None
-            if mode in ('sound', 'both'):
-                self.p.beep(1200, 90)
-        except (AttributeError, OSError):
-            pass
+                self.p.led_rgb('b', 0, 255, 80)
+                for direction in ('up', 'down', 'left', 'right'):
+                    self.p.led_dpad(direction, 0x00ff00)
+                app_log("notification led started")
+            except Exception as error:
+                app_log(f"notification led failed error={error}")
+        if mode in ('sound', 'both'):
+            try:
+                self.p.beep(1600, 250)
+                app_log("notification sound started")
+            except Exception as error:
+                app_log(f"notification sound failed error={error}")
+        app_log(f"notification triggered mode={mode}")
 
     def _leds(self, pc, wo):
+        if time.monotonic() < self._notification_until:
+            return
         s = (pc > 0, wo)
         if s == self._last_led:
             return
@@ -1620,7 +1639,8 @@ class ChatDisplay:
                 elif sel==5:
                     self._notification_mode = cycle(
                         ['led','sound','both','silent'], self._notification_mode, -1)
-                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                    save_choice(NOTIFICATION_FILE, self._notification_mode)
+                    self.notify_new_message(); draw()
                 elif sel==6:
                     self._auto_dim = not self._auto_dim
                     save_auto_dim(self._auto_dim)
@@ -1652,7 +1672,8 @@ class ChatDisplay:
                 elif sel==5:
                     self._notification_mode = cycle(
                         ['led','sound','both','silent'], self._notification_mode, 1)
-                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                    save_choice(NOTIFICATION_FILE, self._notification_mode)
+                    self.notify_new_message(); draw()
                 elif sel==6:
                     self._auto_dim = not self._auto_dim
                     save_auto_dim(self._auto_dim)
@@ -1678,7 +1699,8 @@ class ChatDisplay:
                 if sel==5:
                     self._notification_mode = cycle(
                         ['led','sound','both','silent'], self._notification_mode, 1)
-                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                    save_choice(NOTIFICATION_FILE, self._notification_mode)
+                    self.notify_new_message(); draw()
                 if sel==6:
                     self._auto_dim = not self._auto_dim
                     save_auto_dim(self._auto_dim)
@@ -1769,12 +1791,17 @@ def main():
         last_render = 0.0
         last_render_state = None
         last_message_revision = -1
+        last_incoming_revision = backend.incoming_revision()
 
         while running:
             msgs = backend.messages()
             pc = backend.peer_count()
             wo = backend.web_connected()
             message_revision = backend.message_revision()
+            incoming_revision = backend.incoming_revision()
+            if incoming_revision != last_incoming_revision:
+                display.notify_new_message()
+                last_incoming_revision = incoming_revision
             if message_revision != last_message_revision:
                 # The deque can remain at 500 entries while a new web message
                 # replaces the oldest one, so count changes are not a reliable
@@ -1783,9 +1810,6 @@ def main():
                 previous_bottom = getattr(display, '_max_scroll', 0)
                 if scroll >= previous_bottom:
                     scroll = 10**9
-                if (last_message_revision >= 0 and msgs and
-                        msgs[-1].get('source') in ('web', 'mesh')):
-                    display.notify_new_message()
                 last_message_revision = message_revision
             # LCD flips are relatively expensive on the Pager.  Render only
             # when visible state changes, plus a slow safety refresh, instead
