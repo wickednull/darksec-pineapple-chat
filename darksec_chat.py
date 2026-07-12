@@ -511,6 +511,8 @@ class ChatBackend:
         self._web_enabled = bool(url)
         self._web_seen = set()
         self._web_last_id = 0
+        self._pending_web_echoes = deque(maxlen=50)
+        self._web_echo_lock = threading.Lock()
         self._http = DarkSecHTTP(timeout=5)
 
     def start(self):
@@ -792,6 +794,25 @@ class ChatBackend:
         query = f"{query}&{after}" if query else after
         return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
+    def _consume_local_web_echo(self, sender, text):
+        """Suppress only exact recent echoes of messages posted by this Pager."""
+        if sender != self.username or not isinstance(text, str):
+            return False
+        now = time.monotonic()
+        with self._web_echo_lock:
+            fresh = deque(maxlen=50)
+            matched = False
+            while self._pending_web_echoes:
+                pending_text, sent_at = self._pending_web_echoes.popleft()
+                if now - sent_at > 60:
+                    continue
+                if not matched and pending_text == text:
+                    matched = True
+                    continue
+                fresh.append((pending_text, sent_at))
+            self._pending_web_echoes = fresh
+        return matched
+
     def _poll_web_once(self):
         try:
             response = self._http.get(self._web_poll_url())
@@ -836,17 +857,19 @@ class ChatBackend:
                     dedupe_key = f"id:{mid}"
                 else:
                     dedupe_key = f"fallback:{msg.get('username','')}|{msg.get('message','')}|{msg.get('created_at', msg.get('timestamp',''))}"
-                if dedupe_key in self._web_seen or msg.get('username','') == self.username:
+                sender = msg.get('username', 'Web')
+                sender = sender if isinstance(sender, str) else 'Web'
+                t = msg.get('message','')
+                if dedupe_key in self._web_seen:
                     continue
                 self._web_seen.add(dedupe_key)
                 if len(self._web_seen) > 2000:
                     # IDs older than _web_last_id will not be requested again.
                     self._web_seen.clear()
                     self._web_seen.add(dedupe_key)
-                t = msg.get('message','')
                 if isinstance(t, str) and t:
-                    sender = msg.get('username', 'Web')
-                    sender = sender if isinstance(sender, str) else 'Web'
+                    if self._consume_local_web_echo(sender, t):
+                        continue
                     self.add_message(sender, t, 'web', msg.get('created_at'))
                     # Do not flood mesh peers with website backlog on startup.
                     if not initial_sync:
@@ -864,6 +887,8 @@ class ChatBackend:
             response = self._http.post(
                 self._web_url, {"username": self.username, "message": text})
             if response['ok']:
+                with self._web_echo_lock:
+                    self._pending_web_echoes.append((text, time.monotonic()))
                 app_log("web_post ok")
                 return True
             else:
