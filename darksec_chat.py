@@ -119,6 +119,17 @@ CHAT_DIR = "/root/loot/darksec-chat"
 MESSAGES_FILE = os.path.join(CHAT_DIR, 'messages.json')
 USERNAME_FILE = os.path.join(CHAT_DIR, 'username.txt')
 THEME_FILE = os.path.join(CHAT_DIR, 'theme.txt')
+MESH_ENABLED_FILE = os.path.join(CHAT_DIR, 'mesh_enabled.txt')
+AUTO_DIM_FILE = os.path.join(CHAT_DIR, 'auto_dim.txt')
+WEB_ENABLED_FILE = os.path.join(CHAT_DIR, 'web_enabled.txt')
+NOTIFICATION_FILE = os.path.join(CHAT_DIR, 'notification_mode.txt')
+DIM_DELAY_FILE = os.path.join(CHAT_DIR, 'dim_delay.txt')
+POLL_INTERVAL_FILE = os.path.join(CHAT_DIR, 'poll_interval.txt')
+TEXT_SIZE_FILE = os.path.join(CHAT_DIR, 'text_size.txt')
+RETENTION_FILE = os.path.join(CHAT_DIR, 'retention.txt')
+STARTUP_MODE_FILE = os.path.join(CHAT_DIR, 'startup_mode.txt')
+BRIGHTNESS_FILE = os.path.join(CHAT_DIR, 'brightness.txt')
+MESH_KEY_FILE = os.path.join(CHAT_DIR, 'mesh_key.txt')
 APP_LOG_FILE = os.path.join(CHAT_DIR, 'darksec_chat_app.log')
 INPUT_REQUEST_FILE = os.path.join(SCRIPT_DIR, 'data', 'input_request')
 PENDING_MESSAGE_FILE = os.path.join(SCRIPT_DIR, 'data', 'pending_message.txt')
@@ -339,6 +350,69 @@ def save_theme_name(path, name):
         f.write(valid_theme_name(name))
 
 
+def load_mesh_enabled():
+    try:
+        with open(MESH_ENABLED_FILE) as f:
+            return f.read().strip().lower() in ('1', 'true', 'on', 'yes')
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def save_mesh_enabled(enabled):
+    with open(MESH_ENABLED_FILE, 'w') as f:
+        f.write('on' if enabled else 'off')
+
+
+def load_auto_dim():
+    try:
+        with open(AUTO_DIM_FILE) as f:
+            return f.read().strip().lower() in ('1', 'true', 'on', 'yes')
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def save_auto_dim(enabled):
+    with open(AUTO_DIM_FILE, 'w') as f:
+        f.write('on' if enabled else 'off')
+
+
+def load_choice(path, choices, default):
+    try:
+        with open(path) as f:
+            value = f.read().strip().lower()
+        return value if value in choices else default
+    except (FileNotFoundError, OSError):
+        return default
+
+
+def save_choice(path, value):
+    with open(path, 'w') as f:
+        f.write(str(value))
+
+
+def load_mesh_key(configured_key=''):
+    try:
+        with open(MESH_KEY_FILE) as f:
+            stored = f.read().strip()
+        return stored or configured_key
+    except (FileNotFoundError, OSError):
+        return configured_key
+
+
+def save_mesh_key(value):
+    with open(MESH_KEY_FILE, 'w') as f:
+        f.write(value)
+    os.chmod(MESH_KEY_FILE, 0o600)
+
+
+def load_number(path, choices, default):
+    try:
+        value = int(load_choice(path, {str(v) for v in choices}, str(default)))
+        return value if value in choices else default
+    except ValueError:
+        return default
+
+
 def next_theme_name(current, direction=1):
     if current not in THEME_ORDER:
         return 'darksec'
@@ -488,13 +562,17 @@ class ChatBackend:
         self.username = username
         self.udp_port = cfg['udp_port']
         self.tcp_port = cfg['tcp_port']
-        self._mesh_key = cfg.get('mesh_shared_key', '').encode('utf-8')
-        self._mesh_enabled = len(self._mesh_key) >= 32
+        self._default_mesh_key = cfg.get('mesh_shared_key', '')
+        self._mesh_key = load_mesh_key(self._default_mesh_key).encode('utf-8')
+        self._mesh_configured = len(self._mesh_key) >= 32
+        self._mesh_enabled = False
+        self._mesh_generation = 0
         self._mesh_enc_key = hashlib.sha256(b'darksec-enc\0' + self._mesh_key).digest()
         self._mesh_mac_key = hashlib.sha256(b'darksec-mac\0' + self._mesh_key).digest()
         self.running = False
 
-        self._msgs = deque(maxlen=500)
+        self._retention = load_number(RETENTION_FILE, (100, 250, 500), 500)
+        self._msgs = deque(maxlen=self._retention)
         self._msg_lock = threading.Lock()
         self._message_revision = 0
         self._peers = {}
@@ -508,30 +586,75 @@ class ChatBackend:
             url = self.DARKSEC_URL
         self._web_url = url
         self._web_ok = False
-        self._web_enabled = bool(url)
+        self._web_configured = bool(url)
+        self._web_enabled = False
+        self._web_generation = 0
+        self._web_poll_interval = load_number(
+            POLL_INTERVAL_FILE, (1, 3, 5, 10), 3)
         self._web_seen = set()
         self._web_last_id = 0
         self._pending_web_echoes = deque(maxlen=50)
         self._web_echo_lock = threading.Lock()
         self._http = DarkSecHTTP(timeout=5)
 
-    def start(self):
+    def start(self, mesh_enabled=False, web_enabled=True):
         self.running = True
-        if self._mesh_enabled:
-            t = threading.Thread(target=self._mesh_broadcast, daemon=True)
-            t.start()
-            t = threading.Thread(target=self._mesh_listener, daemon=True)
-            t.start()
-            t = threading.Thread(target=self._mesh_tcp_server, daemon=True)
-            t.start()
-        else:
-            app_log("mesh disabled: MESH_SHARED_KEY must be at least 32 characters")
-        if self._web_enabled:
-            t = threading.Thread(target=self._web_poll, daemon=True)
-            t.start()
+        self.set_mesh_enabled(mesh_enabled)
+        self.set_web_enabled(web_enabled)
 
     def stop(self):
+        self.set_mesh_enabled(False)
+        self.set_web_enabled(False)
         self.running = False
+
+    def mesh_enabled(self):
+        return self._mesh_enabled
+
+    def mesh_configured(self):
+        return self._mesh_configured
+
+    def set_mesh_key(self, value):
+        was_enabled = self._mesh_enabled
+        if was_enabled:
+            self.set_mesh_enabled(False)
+        self._mesh_key = value.encode('utf-8')
+        self._mesh_configured = len(self._mesh_key) >= 32
+        self._mesh_enc_key = hashlib.sha256(
+            b'darksec-enc\0' + self._mesh_key).digest()
+        self._mesh_mac_key = hashlib.sha256(
+            b'darksec-mac\0' + self._mesh_key).digest()
+        with self._nonce_lock:
+            self._seen_nonces.clear()
+        if was_enabled and self._mesh_configured:
+            self.set_mesh_enabled(True)
+        return self._mesh_configured
+
+    def set_mesh_enabled(self, enabled):
+        enabled = bool(enabled)
+        if enabled and not self._mesh_configured:
+            app_log("mesh enable rejected: MESH_SHARED_KEY must be at least 32 characters")
+            return False
+        if enabled == self._mesh_enabled:
+            return True
+        self._mesh_generation += 1
+        generation = self._mesh_generation
+        self._mesh_enabled = enabled
+        if enabled:
+            for target in (self._mesh_broadcast, self._mesh_listener,
+                           self._mesh_tcp_server):
+                threading.Thread(target=target, args=(generation,), daemon=True).start()
+            app_log("mesh enabled")
+        else:
+            with self._peer_lock:
+                for sock, _ in self._peers.values():
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+                self._peers.clear()
+                self._mesh_ok = False
+            app_log("mesh disabled")
+        return True
 
     def messages(self):
         with self._msg_lock:
@@ -547,6 +670,41 @@ class ChatBackend:
 
     def web_connected(self):
         return self._web_enabled and self._web_ok
+
+    def web_enabled(self):
+        return self._web_enabled
+
+    def set_web_enabled(self, enabled):
+        enabled = bool(enabled) and self._web_configured
+        if enabled == self._web_enabled:
+            return True
+        self._web_generation += 1
+        self._web_enabled = enabled
+        self._web_ok = False
+        if enabled:
+            generation = self._web_generation
+            threading.Thread(
+                target=self._web_poll, args=(generation,), daemon=True).start()
+            app_log("web bridge enabled")
+        else:
+            app_log("web bridge disabled")
+        return self._web_configured
+
+    def set_poll_interval(self, seconds):
+        if seconds in (1, 3, 5, 10):
+            self._web_poll_interval = seconds
+
+    def set_retention(self, limit):
+        if limit not in (100, 250, 500):
+            return
+        with self._msg_lock:
+            self._retention = limit
+            self._msgs = deque(self._msgs, maxlen=limit)
+
+    def clear_messages(self):
+        with self._msg_lock:
+            self._msgs.clear()
+            self._message_revision += 1
 
     def mesh_connected(self):
         return self._mesh_ok
@@ -662,11 +820,12 @@ class ChatBackend:
 
     # -- Mesh --
 
-    def _mesh_broadcast(self):
+    def _mesh_broadcast(self, generation):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         s.settimeout(1)
-        while self.running:
+        while (self.running and self._mesh_enabled and
+               generation == self._mesh_generation):
             try:
                 data = json.dumps(self._secure_packet(
                     {"type":"presence","username":self.username,"ip":get_local_ip()}))
@@ -675,13 +834,14 @@ class ChatBackend:
                 pass
             time.sleep(5)
 
-    def _mesh_listener(self):
+    def _mesh_listener(self, generation):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(('', self.udp_port))
         s.settimeout(1)
         local = get_local_ip()
-        while self.running:
+        while (self.running and self._mesh_enabled and
+               generation == self._mesh_generation):
             try:
                 d, addr = s.recvfrom(4096)
                 if addr[0] == local:
@@ -703,20 +863,21 @@ class ChatBackend:
                                     {"type":"handshake","username":self.username})).encode())
                                 self._peers[ip] = (tcp, name)
                                 self._mesh_ok = True
-                                t = threading.Thread(target=self._mesh_peer, args=(tcp, ip, name), daemon=True)
+                                t = threading.Thread(target=self._mesh_peer, args=(tcp, ip, name, generation), daemon=True)
                                 t.start()
                             except (ConnectionRefusedError, OSError, socket.timeout):
                                 pass
             except (json.JSONDecodeError, socket.timeout, OSError):
                 pass
 
-    def _mesh_tcp_server(self):
+    def _mesh_tcp_server(self, generation):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(('', self.tcp_port))
         s.listen(5)
         s.settimeout(1)
-        while self.running:
+        while (self.running and self._mesh_enabled and
+               generation == self._mesh_generation):
             try:
                 c, addr = s.accept()
                 c.settimeout(3)
@@ -731,7 +892,7 @@ class ChatBackend:
                                 name = h.get('username', '?')
                                 self._peers[addr[0]] = (c, name)
                                 self._mesh_ok = True
-                                t = threading.Thread(target=self._mesh_peer, args=(c, addr[0], name), daemon=True)
+                                t = threading.Thread(target=self._mesh_peer, args=(c, addr[0], name, generation), daemon=True)
                                 t.start()
                                 accepted = True
                         except (json.JSONDecodeError, OSError):
@@ -741,9 +902,10 @@ class ChatBackend:
             except socket.timeout:
                 pass
 
-    def _mesh_peer(self, sock, ip, name):
+    def _mesh_peer(self, sock, ip, name, generation):
         sock.settimeout(1)
-        while self.running:
+        while (self.running and self._mesh_enabled and
+               generation == self._mesh_generation):
             try:
                 d = sock.recv(4096).decode()
                 if not d:
@@ -780,10 +942,11 @@ class ChatBackend:
 
     # -- Web --
 
-    def _web_poll(self):
-        while self.running:
+    def _web_poll(self, generation):
+        while (self.running and self._web_enabled and
+               generation == self._web_generation):
             self._poll_web_once()
-            time.sleep(1)
+            time.sleep(self._web_poll_interval)
 
     def _web_poll_url(self):
         if self._web_last_id <= 0:
@@ -926,7 +1089,14 @@ class ChatDisplay:
         self.theme = THEMES[self.theme_name]
         self._font = None
         self._ttf = False
-        self._bright = 80
+        self._bright = load_number(
+            BRIGHTNESS_FILE, tuple(range(20, 101, 10)), 80)
+        self._auto_dim = load_auto_dim()
+        self._dim_delay = load_number(DIM_DELAY_FILE, (30, 60, 300), 60)
+        self._notification_mode = load_choice(
+            NOTIFICATION_FILE, ('led', 'sound', 'both', 'silent'), 'both')
+        self._text_size_name = load_choice(
+            TEXT_SIZE_FILE, ('compact', 'normal', 'large'), 'normal')
         self._last_act = time.time()
         self._dimmed = False
         self._last_led = None
@@ -1001,12 +1171,32 @@ class ChatDisplay:
         return pressed or fallback_pressed
 
     def _dim_check(self):
+        if not self._auto_dim:
+            if self._dimmed:
+                self._dimmed = False
+                try:
+                    self.p.set_brightness(self._bright)
+                except Exception:
+                    pass
+            return
         if self._dimmed:
             return
-        if time.time() - self._last_act > 30:
+        if time.time() - self._last_act > self._dim_delay:
             self._dimmed = True
             try: self.p.set_brightness(20)
             except: pass
+
+    def notify_new_message(self):
+        mode = self._notification_mode
+        try:
+            if mode in ('led', 'both'):
+                self.p.led_rgb('a', 0, 255, 80)
+                # Force the next chat render to restore normal status LEDs.
+                self._last_led = None
+            if mode in ('sound', 'both'):
+                self.p.beep(1200, 90)
+        except (AttributeError, OSError):
+            pass
 
     def _leds(self, pc, wo):
         s = (pc > 0, wo)
@@ -1112,7 +1302,9 @@ class ChatDisplay:
             self.p.draw_text(W-112, 8, f"M:{pc} W:{'ON' if wo else '--'}", theme['MUTED'], 1)
 
         # Lines
-        lh = self.p.ttf_height(self._font, 13)+2 if self._ttf else 9
+        text_size = {'compact': 11, 'normal': 13, 'large': 16}[
+            self._text_size_name]
+        lh = self.p.ttf_height(self._font, text_size)+2 if self._ttf else 9
         ah = H - self.HEADER_H - self.FOOTER_H - 2
         mv = max(1, ah // max(1, lh))
         mw = max(10, (W-12)//7) if self._ttf else (W-12)//6
@@ -1131,7 +1323,7 @@ class ChatDisplay:
             else:               np = s
             lines.append((f"{pfx} {np}:", src))
             if self._ttf:
-                for w in wrap_pixel(text, W-12, self.p, self._font, 13):
+                for w in wrap_pixel(text, W-12, self.p, self._font, text_size):
                     lines.append((w, src))
             else:
                 for w in self._wrap_approx(text, mw):
@@ -1144,8 +1336,8 @@ class ChatDisplay:
         if not lines:
             empty = "No messages yet. Press A to send."
             if self._ttf:
-                tw = self.p.ttf_width(empty, self._font, 13)
-                self.p.draw_ttf((W-tw)//2, self.HEADER_H+45, empty, theme['MUTED'], self._font, 13)
+                tw = self.p.ttf_width(empty, self._font, text_size)
+                self.p.draw_ttf((W-tw)//2, self.HEADER_H+45, empty, theme['MUTED'], self._font, text_size)
             else:
                 self.p.draw_text_centered(self.HEADER_H+45, empty, theme['MUTED'], 1)
 
@@ -1164,7 +1356,7 @@ class ChatDisplay:
             elif src == 'system':  cl = theme['SYSTEM']
             elif lt.endswith(':'): cl = theme['PEER']
             else:                  cl = theme['TEXT']
-            self._text(4, y, lt, cl, ts=13)
+            self._text(4, y, lt, cl, ts=text_size)
             y += lh
 
         if ms > 0:
@@ -1194,7 +1386,7 @@ class ChatDisplay:
 
     # -- Keyboard (inline, using poll_input) --
 
-    def keyboard(self, prompt="Message:"):
+    def keyboard(self, prompt="Message:", secret=False):
         text = ""
         shifted = False
         r, c = 0, 0
@@ -1219,7 +1411,8 @@ class ChatDisplay:
             self.p.fill_rect(0, hh-2, W, 2, t['ACCENT'])
             self._text(5, 1, prompt, t['TITLE'], ts=12)
 
-            pv = text[-50:] if len(text)>50 else text
+            visible_text = '*' * len(text) if secret else text
+            pv = visible_text[-50:] if len(visible_text)>50 else visible_text
             self._text(5, hh+1, pv+'_', t['TEXT'], ts=13)
 
             y = sy
@@ -1327,74 +1520,79 @@ class ChatDisplay:
 
     # -- Pause menu --
 
-    def pause_menu(self, pc, wo, mc, user, ip):
+    def confirm(self, title, detail):
+        t = self.theme
+        self.p.clear(t['BG'])
+        self._text(20, 42, title, t['WARNING'], ts=18)
+        self._text(20, 82, detail, t['TEXT'], ts=13)
+        self._text(20, 125, "A confirm    B cancel", t['MUTED'], ts=13)
+        self.p.flip()
+        while True:
+            pressed = self.pressed_buttons()
+            if pressed & Pager.BTN_A:
+                return True
+            if pressed & Pager.BTN_B:
+                return False
+            self.p.delay(30)
+
+    def pause_menu(self, pc, wo, mc, user, ip, mesh_on, mesh_ready,
+                   web_on, poll_interval, retention):
         sel = 0
         bright = self._bright
-        num = 4
+        num = 17
+
+        def cycle(values, current, direction):
+            index = values.index(current) if current in values else 0
+            return values[(index + direction) % len(values)]
 
         def draw():
             t = self.theme
             self.p.clear(t['BG'])
             W, H = self.W, self.H
-            self.p.fill_rect(0, 0, W, 28, t['PANEL'])
-            self.p.fill_rect(0, 26, W, 2, t['ACCENT'])
+            self.p.fill_rect(0, 0, W, 27, t['PANEL'])
+            self.p.fill_rect(0, 25, W, 2, t['ACCENT'])
             if self._ttf:
-                tw = self.p.ttf_width("DarkSec-Chat", self._font, 20)
-                self.p.draw_ttf((W-tw)//2, 5, "DarkSec-Chat", t['TITLE'], self._font, 20)
+                title = "DARKSEC // SETTINGS"
+                tw = self.p.ttf_width(title, self._font, 18)
+                self.p.draw_ttf((W-tw)//2, 3, title, t['TITLE'], self._font, 18)
             else:
-                self.p.draw_text_centered(8, "DarkSec-Chat", t['TITLE'], 2)
+                self.p.draw_text_centered(6, "DARKSEC SETTINGS", t['TITLE'], 2)
 
-            bw, bh = 280, 14
-            bx = (W-bw)//2
-            by = 45
-            bl = "Brightness"
-            if self._ttf:
-                tw = self.p.ttf_width(bl, self._font, 13)
-                self.p.draw_ttf((W-tw)//2, by-15, bl, t['HIGHLIGHT'] if sel==0 else t['MUTED'], self._font, 13)
-            else:
-                self.p.draw_text_centered(by-14, bl, t['HIGHLIGHT'] if sel==0 else t['MUTED'], 1)
-            if sel==0:
-                self.p.rect(bx-2, by-2, bw+4, bh+4, t['HIGHLIGHT'])
-            self.p.fill_rect(bx, by, bw, bh, t['PANEL_2'])
-            self.p.fill_rect(bx, by, int(bw*bright/100), bh, t['OK'])
-            self.p.rect(bx, by, bw, bh, t['MUTED'])
-            pct = f"{bright}%"
-            if self._ttf:
-                tw = self.p.ttf_width(pct, self._font, 12)
-                self.p.draw_ttf((W-tw)//2, by+bh+2, pct, t['MUTED'], self._font, 12)
-            else:
-                self.p.draw_text_centered(by+bh+2, pct, t['MUTED'], 1)
+            mesh_state = 'ON' if mesh_on else ('NO KEY' if not mesh_ready else 'OFF')
+            startup = load_choice(
+                STARTUP_MODE_FILE, ('remember', 'web', 'mesh', 'both'), 'remember')
+            items = [
+                f"Brightness       < {bright}% >",
+                f"Theme            < {self.theme['name']} >",
+                f"Mesh             < {mesh_state} >",
+                f"Web bridge       < {'ON' if web_on else 'OFF'} >",
+                f"Username         {user[:20]}",
+                f"Notifications    < {self._notification_mode.upper()} >",
+                f"Auto-dim         < {'ON' if self._auto_dim else 'OFF'} >",
+                f"Dim delay        < {self._dim_delay}s >",
+                f"Web polling      < {poll_interval}s >",
+                f"Text size        < {self._text_size_name.upper()} >",
+                f"History limit    < {retention} >",
+                f"Startup mode     < {startup.upper()} >",
+                f"Replace mesh key  {'SET' if mesh_ready else 'MISSING'}",
+                "Clear chat history",
+                "Reset all settings",
+                "Return to main menu",
+                "Exit DarkSec-Chat",
+            ]
+            top, row_h = 31, 24
+            first = max(0, min(sel - 3, num - 7))
+            for visible, line in enumerate(items[first:first+7]):
+                i = first + visible
+                selected = i == sel
+                y = top + visible * row_h
+                if selected:
+                    self.p.fill_rect(12, y-2, W-24, row_h-2, t['PANEL_2'])
+                    self.p.rect(12, y-2, W-24, row_h-2, t['HIGHLIGHT'])
+                self._text(22, y+2, line,
+                           t['HIGHLIGHT'] if selected else t['MUTED'], ts=13)
 
-            ty = by + bh + 20
-            theme_line = f"Theme: {self.theme['name']}"
-            theme_col = t['HIGHLIGHT'] if sel == 1 else t['MUTED']
-            if self._ttf:
-                tw = self.p.ttf_width(theme_line, self._font, 13)
-                tx = (W - tw) // 2
-                if sel == 1:
-                    self.p.rect(tx-8, ty-3, tw+16, 20, t['HIGHLIGHT'])
-                self.p.draw_ttf(tx, ty, theme_line, theme_col, self._font, 13)
-            else:
-                self.p.draw_text_centered(ty, theme_line, theme_col, 1)
-
-            iy = ty + 24
-            for i, l in enumerate([f"User: {user}", f"IP: {ip}", f"Mesh: {pc}", f"Web: {'OK' if wo else 'OFF'}", f"Msgs: {mc}"]):
-                self._text(20, iy+i*14, l, t['MUTED'], ts=11)
-
-            oy = iy + 5*14 + 4
-            for i, opt in enumerate(["[  MAIN MENU  ]", "[  EXIT  ]"]):
-                hs = sel == i+2
-                if self._ttf:
-                    tw = self.p.ttf_width(opt, self._font, 14)
-                    ox = (W-tw)//2
-                    self.p.fill_rect(ox-6, oy-2, tw+12, 22, t['ACCENT'] if hs else t['PANEL_2'])
-                    self.p.rect(ox-6, oy-2, tw+12, 22, t['HIGHLIGHT'] if hs else t['PANEL'])
-                    self.p.draw_ttf(ox, oy+1, opt, t['HIGHLIGHT'] if hs else t['MUTED'], self._font, 14)
-                else:
-                    self.p.draw_text_centered(oy+i*18, opt, t['HIGHLIGHT'] if hs else t['MUTED'], 1)
-                oy += 28 if self._ttf else 18
-
-            hint = "UP/DN nav   LEFT/RIGHT adjust   A select   B back"
+            hint = f"{sel+1}/{num}  UP/DN nav  LEFT/RIGHT change  A select"
             self.p.fill_rect(0, H-self.FOOTER_H, W, self.FOOTER_H, t['PANEL'])
             self._text(4, H-self.FOOTER_H+2, hint, t['MUTED'], ts=10)
             self.p.flip()
@@ -1411,17 +1609,97 @@ class ChatDisplay:
                 sel = (sel+1)%num; draw()
             elif pressed & Pager.BTN_LEFT:
                 if sel==0:
-                    bright = max(20, bright-10); self.set_brightness(bright); draw()
+                    bright = max(20, bright-10); self.set_brightness(bright)
+                    save_choice(BRIGHTNESS_FILE, bright); draw()
                 elif sel==1:
                     self.cycle_theme(-1); draw()
+                elif sel==2:
+                    return 'toggle_mesh'
+                elif sel==3:
+                    return 'toggle_web'
+                elif sel==5:
+                    self._notification_mode = cycle(
+                        ['led','sound','both','silent'], self._notification_mode, -1)
+                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                elif sel==6:
+                    self._auto_dim = not self._auto_dim
+                    save_auto_dim(self._auto_dim)
+                    self.activity(); draw()
+                elif sel==7:
+                    self._dim_delay = cycle([30,60,300], self._dim_delay, -1)
+                    save_choice(DIM_DELAY_FILE, self._dim_delay); draw()
+                elif sel==8:
+                    return 'poll:' + str(cycle([1,3,5,10], poll_interval, -1))
+                elif sel==9:
+                    self._text_size_name = cycle(
+                        ['compact','normal','large'], self._text_size_name, -1)
+                    save_choice(TEXT_SIZE_FILE, self._text_size_name); draw()
+                elif sel==10:
+                    return 'retention:' + str(cycle([100,250,500], retention, -1))
+                elif sel==11:
+                    value = cycle(['remember','web','mesh','both'], startup, -1)
+                    save_choice(STARTUP_MODE_FILE, value); draw()
             elif pressed & Pager.BTN_RIGHT:
                 if sel==0:
-                    bright = min(100, bright+10); self.set_brightness(bright); draw()
+                    bright = min(100, bright+10); self.set_brightness(bright)
+                    save_choice(BRIGHTNESS_FILE, bright); draw()
                 elif sel==1:
                     self.cycle_theme(1); draw()
+                elif sel==2:
+                    return 'toggle_mesh'
+                elif sel==3:
+                    return 'toggle_web'
+                elif sel==5:
+                    self._notification_mode = cycle(
+                        ['led','sound','both','silent'], self._notification_mode, 1)
+                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                elif sel==6:
+                    self._auto_dim = not self._auto_dim
+                    save_auto_dim(self._auto_dim)
+                    self.activity(); draw()
+                elif sel==7:
+                    self._dim_delay = cycle([30,60,300], self._dim_delay, 1)
+                    save_choice(DIM_DELAY_FILE, self._dim_delay); draw()
+                elif sel==8:
+                    return 'poll:' + str(cycle([1,3,5,10], poll_interval, 1))
+                elif sel==9:
+                    self._text_size_name = cycle(
+                        ['compact','normal','large'], self._text_size_name, 1)
+                    save_choice(TEXT_SIZE_FILE, self._text_size_name); draw()
+                elif sel==10:
+                    return 'retention:' + str(cycle([100,250,500], retention, 1))
+                elif sel==11:
+                    value = cycle(['remember','web','mesh','both'], startup, 1)
+                    save_choice(STARTUP_MODE_FILE, value); draw()
             elif pressed & Pager.BTN_A:
-                if sel==2: return 'menu'
-                if sel==3: return 'exit'
+                if sel==2: return 'toggle_mesh'
+                if sel==3: return 'toggle_web'
+                if sel==4: return 'change_username'
+                if sel==5:
+                    self._notification_mode = cycle(
+                        ['led','sound','both','silent'], self._notification_mode, 1)
+                    save_choice(NOTIFICATION_FILE, self._notification_mode); draw()
+                if sel==6:
+                    self._auto_dim = not self._auto_dim
+                    save_auto_dim(self._auto_dim)
+                    self.activity(); draw()
+                if sel==7:
+                    self._dim_delay = cycle([30,60,300], self._dim_delay, 1)
+                    save_choice(DIM_DELAY_FILE, self._dim_delay); draw()
+                if sel==8: return 'poll:' + str(cycle([1,3,5,10], poll_interval, 1))
+                if sel==9:
+                    self._text_size_name = cycle(
+                        ['compact','normal','large'], self._text_size_name, 1)
+                    save_choice(TEXT_SIZE_FILE, self._text_size_name); draw()
+                if sel==10: return 'retention:' + str(cycle([100,250,500], retention, 1))
+                if sel==11:
+                    value = cycle(['remember','web','mesh','both'], startup, 1)
+                    save_choice(STARTUP_MODE_FILE, value); draw()
+                if sel==12: return 'change_mesh_key'
+                if sel==13: return 'clear_history'
+                if sel==14: return 'reset_settings'
+                if sel==15: return 'menu'
+                if sel==16: return 'exit'
             elif pressed & Pager.BTN_B:
                 return 'resume'
             self.p.delay(20)
@@ -1463,7 +1741,14 @@ def main():
                 pass
         backend.username = username
 
-        backend.start()
+        startup_mode = load_choice(
+            STARTUP_MODE_FILE, ('remember', 'web', 'mesh', 'both'), 'remember')
+        mesh_start = load_mesh_enabled()
+        web_start = load_choice(WEB_ENABLED_FILE, ('on', 'off'), 'on') == 'on'
+        if startup_mode != 'remember':
+            mesh_start = startup_mode in ('mesh', 'both')
+            web_start = startup_mode in ('web', 'both')
+        backend.start(mesh_start, web_start)
 
         try:
             with open(MESSAGES_FILE) as f:
@@ -1498,6 +1783,9 @@ def main():
                 previous_bottom = getattr(display, '_max_scroll', 0)
                 if scroll >= previous_bottom:
                     scroll = 10**9
+                if (last_message_revision >= 0 and msgs and
+                        msgs[-1].get('source') in ('web', 'mesh')):
+                    display.notify_new_message()
                 last_message_revision = message_revision
             # LCD flips are relatively expensive on the Pager.  Render only
             # when visible state changes, plus a slow safety refresh, instead
@@ -1534,7 +1822,117 @@ def main():
                 else:
                     app_log("inline keyboard closed empty")
             elif pressed & Pager.BTN_B:
-                a = display.pause_menu(pc, wo, len(msgs), backend.username, get_local_ip())
+                a = display.pause_menu(
+                    pc, wo, len(msgs), backend.username, get_local_ip(),
+                    backend.mesh_enabled(), backend.mesh_configured(),
+                    backend.web_enabled(), backend._web_poll_interval,
+                    backend._retention)
+                if a == 'toggle_mesh':
+                    requested = not backend.mesh_enabled()
+                    if backend.set_mesh_enabled(requested):
+                        try:
+                            save_mesh_enabled(requested)
+                        except OSError as error:
+                            app_log(f"mesh preference save failed error={error}")
+                    else:
+                        backend.add_message(
+                            "System", "Set MESH_SHARED_KEY before enabling mesh.",
+                            "system")
+                    last_render_state = None
+                elif a == 'toggle_web':
+                    requested = not backend.web_enabled()
+                    backend.set_web_enabled(requested)
+                    save_choice(WEB_ENABLED_FILE, 'on' if requested else 'off')
+                    last_render_state = None
+                elif a.startswith('poll:'):
+                    interval = int(a.split(':', 1)[1])
+                    backend.set_poll_interval(interval)
+                    save_choice(POLL_INTERVAL_FILE, interval)
+                    last_render_state = None
+                elif a.startswith('retention:'):
+                    retention = int(a.split(':', 1)[1])
+                    backend.set_retention(retention)
+                    save_choice(RETENTION_FILE, retention)
+                    last_render_state = None
+                elif a == 'change_mesh_key':
+                    new_key = display.keyboard("New mesh key:", secret=True).strip()
+                    if new_key:
+                        if len(new_key) < 32:
+                            backend.add_message(
+                                "System", "Mesh key must be at least 32 characters.",
+                                "system")
+                        else:
+                            try:
+                                save_mesh_key(new_key)
+                                backend.set_mesh_key(new_key)
+                                backend.add_message(
+                                    "System", "Mesh key replaced; peers must match.",
+                                    "system")
+                                app_log("mesh key replaced successfully")
+                            except OSError as error:
+                                backend.add_message(
+                                    "System", "Mesh key could not be saved.", "system")
+                                app_log(f"mesh key save failed error={error}")
+                    last_render_state = None
+                elif a == 'clear_history':
+                    if display.confirm("CLEAR HISTORY?", "This cannot be undone."):
+                        backend.clear_messages()
+                        try:
+                            os.remove(MESSAGES_FILE)
+                        except FileNotFoundError:
+                            pass
+                        backend.add_message("System", "Chat history cleared.", "system")
+                        scroll = 10**9
+                    last_render_state = None
+                elif a == 'reset_settings':
+                    if display.confirm("RESET SETTINGS?", "History and logs are kept."):
+                        preference_files = [
+                            THEME_FILE, MESH_ENABLED_FILE, AUTO_DIM_FILE,
+                            WEB_ENABLED_FILE, NOTIFICATION_FILE, DIM_DELAY_FILE,
+                            POLL_INTERVAL_FILE, TEXT_SIZE_FILE, RETENTION_FILE,
+                            STARTUP_MODE_FILE, BRIGHTNESS_FILE, USERNAME_FILE,
+                            MESH_KEY_FILE,
+                        ]
+                        for path in preference_files:
+                            try:
+                                os.remove(path)
+                            except FileNotFoundError:
+                                pass
+                        display.set_theme('darksec')
+                        display.set_brightness(80)
+                        display._auto_dim = False
+                        display._dim_delay = 60
+                        display._notification_mode = 'both'
+                        display._text_size_name = 'normal'
+                        backend.set_mesh_enabled(False)
+                        backend.set_mesh_key(backend._default_mesh_key)
+                        backend.set_web_enabled(True)
+                        backend.set_poll_interval(3)
+                        backend.set_retention(500)
+                        backend.username = 'PagerUser'
+                        with open(USERNAME_FILE, 'w') as f:
+                            f.write('PagerUser')
+                        backend.add_message("System", "Settings reset to defaults.", "system")
+                    last_render_state = None
+                elif a == 'change_username':
+                    new_username = display.keyboard("New username:").strip()[:32]
+                    if new_username:
+                        old_username = backend.username
+                        backend.username = new_username
+                        try:
+                            with open(USERNAME_FILE, 'w') as f:
+                                f.write(new_username)
+                            backend.add_message(
+                                "System", f"Username changed: {old_username} -> {new_username}",
+                                "system")
+                            app_log(
+                                f"username changed old={old_username!r} new={new_username!r}")
+                        except OSError as error:
+                            backend.username = old_username
+                            backend.add_message(
+                                "System", "Username change could not be saved.", "system")
+                            app_log(f"username save failed error={error}")
+                    last_render_state = None
                 if a in ('exit', 'menu'): running = False
             elif pressed & Pager.BTN_POWER:
                 running = False

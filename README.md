@@ -90,7 +90,7 @@ or firewall rules may block UDP `9999` or TCP `9998`.
 - Chronological transcript with the newest messages at the bottom.
 - Automatic follow mode while viewing the newest messages.
 - Revision-based web-message follow mode remains pinned to the true newest
-  message even when the saved transcript has reached its 500-message limit.
+  message even when the saved transcript has reached its configured limit.
 - Stable scroll position while reviewing older traffic.
 - Large in-app keyboard with lowercase, `SHIFT`, numbers, punctuation,
   `SPACE`, `BSP`, and `SEND`.
@@ -111,6 +111,13 @@ or firewall rules may block UDP `9999` or TCP `9998`.
 | `DOWN` | Scroll toward newer messages |
 | `B / RED` | Open pause menu |
 | `POWER` | Exit DarkSec-Chat |
+
+The scrolling settings menu controls brightness, theme, mesh, the web bridge,
+username, notifications, automatic dimming and delay, web polling interval,
+text size, message retention, and startup mode. It also provides confirmed
+mesh-key replacement, Clear History, and Reset Settings actions. Secret key
+entry is masked and the saved key uses owner-only file permissions. Auto-dim
+defaults to OFF.
 
 ### Keyboard
 
@@ -133,9 +140,13 @@ the action row, and moving down from the action row returns to the top.
 | Control | Action |
 | --- | --- |
 | `UP / DOWN` | Select option |
-| `LEFT / RIGHT` | Adjust brightness or theme |
+| `LEFT / RIGHT` | Change the selected setting |
 | `A / GREEN` | Activate option |
 | `B / RED` | Return to chat |
+
+Notification modes are LED, sound, both, and silent. Startup modes are Remember,
+Web only, Mesh only, and Both. Disabling Web or Mesh stops its background worker
+so unused networking does not consume Pager resources.
 
 ## Themes
 
@@ -252,6 +263,17 @@ over, so message composition stays inside the same responsive LCD session.
 | `/root/loot/darksec-chat/messages.json` | Recent transcript |
 | `/root/loot/darksec-chat/username.txt` | Operator display name |
 | `/root/loot/darksec-chat/theme.txt` | Selected theme |
+| `/root/loot/darksec-chat/brightness.txt` | Display brightness preference |
+| `/root/loot/darksec-chat/mesh_enabled.txt` | Persistent mesh ON/OFF preference |
+| `/root/loot/darksec-chat/auto_dim.txt` | Persistent automatic dimming preference |
+| `/root/loot/darksec-chat/web_enabled.txt` | Persistent web bridge ON/OFF preference |
+| `/root/loot/darksec-chat/notification_mode.txt` | LED/sound notification preference |
+| `/root/loot/darksec-chat/dim_delay.txt` | Automatic dim delay |
+| `/root/loot/darksec-chat/poll_interval.txt` | Website polling interval |
+| `/root/loot/darksec-chat/text_size.txt` | Transcript text size |
+| `/root/loot/darksec-chat/retention.txt` | Transcript retention limit |
+| `/root/loot/darksec-chat/startup_mode.txt` | Web/mesh startup policy |
+| `/root/loot/darksec-chat/mesh_key.txt` | Owner-only mesh encryption key override |
 | `/root/loot/darksec-chat/darksec_chat.log` | Launcher and runtime transitions |
 | `/root/loot/darksec-chat/darksec_chat_app.log` | API, send, input, and crash diagnostics |
 
